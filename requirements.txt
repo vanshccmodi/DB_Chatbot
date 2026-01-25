@@ -1,0 +1,31 @@
+# Schema-Agnostic Database Chatbot
+# Multi-Database Support: MySQL, PostgreSQL, SQLite
+
+# Core dependencies
+streamlit>=1.30.0
+sqlalchemy>=2.0.0
+
+# Database drivers
+pymysql>=1.1.0       # MySQL driver
+psycopg2-binary>=2.9.9  # PostgreSQL driver
+# SQLite is built into Python - no driver needed
+
+# RAG dependencies
+faiss-cpu>=1.7.4
+sentence-transformers>=2.2.2
+
+# LLM dependencies
+groq>=0.4.0  # FREE API!
+openai>=1.0.0  # Optional, for OpenAI provider
+
+# For local models (optional)
+# transformers>=4.36.0
+# torch>=2.0.0
+
+# SQL parsing and validation
+sqlparse>=0.4.4
+
+# Utilities
+python-dotenv>=1.0.0
+numpy>=1.24.0
+pandas>=2.0.0
