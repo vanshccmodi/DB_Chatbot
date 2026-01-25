@@ -1,8 +1,9 @@
 """
 Schema-Agnostic Database Chatbot - Streamlit Application
 
-A production-grade chatbot that connects to ANY MySQL database
-and provides intelligent querying through RAG and Text-to-SQL.
+A production-grade chatbot that connects to ANY database
+(MySQL, PostgreSQL, SQLite) and provides intelligent querying 
+through RAG and Text-to-SQL.
 
 Uses Groq for FREE LLM inference!
 """
@@ -27,11 +28,12 @@ st.set_page_config(
 )
 
 # Imports
-from config import config
+from config import config, DatabaseConfig, DatabaseType
 from database import get_db, get_schema, get_introspector
+from database.connection import DatabaseConnection
 from llm import create_llm_client
 from chatbot import create_chatbot, DatabaseChatbot
-from memory import create_memory, create_enhanced_memory, EnhancedChatMemory
+from memory import ChatMemory, EnhancedChatMemory
 
 
 # Groq models (all FREE!)
@@ -41,6 +43,46 @@ GROQ_MODELS = [
     "mixtral-8x7b-32768",
     "gemma2-9b-it"
 ]
+
+# Database types
+DB_TYPES = {
+    "MySQL": "mysql",
+    "PostgreSQL": "postgresql", 
+    "SQLite": "sqlite"
+}
+
+
+def create_custom_db_config(db_type: str, **kwargs) -> DatabaseConfig:
+    """Create a custom database configuration from user input."""
+    db_config = DatabaseConfig.__new__(DatabaseConfig)
+    
+    # Set database type
+    db_config.db_type = DatabaseType(db_type)
+    
+    # Set connection parameters
+    db_config.host = kwargs.get("host", "")
+    db_config.port = kwargs.get("port", 3306 if db_type == "mysql" else 5432)
+    db_config.database = kwargs.get("database", "")
+    db_config.username = kwargs.get("username", "")
+    db_config.password = kwargs.get("password", "")
+    db_config.ssl_ca = kwargs.get("ssl_ca", None)
+    db_config.sqlite_path = kwargs.get("sqlite_path", "./chatbot.db")
+    
+    return db_config
+
+
+def create_custom_memory(session_id: str, user_id: str, db_connection, llm_client=None, 
+                         enable_summarization=True, summary_threshold=10) -> EnhancedChatMemory:
+    """Create enhanced memory with a custom database connection."""
+    return EnhancedChatMemory(
+        session_id=session_id,
+        user_id=user_id,
+        max_messages=20,
+        db_connection=db_connection,
+        llm_client=llm_client,
+        enable_summarization=enable_summarization,
+        summary_threshold=summary_threshold
+    )
 
 
 def init_session_state():
@@ -65,19 +107,134 @@ def init_session_state():
     
     if "summary_threshold" not in st.session_state:
         st.session_state.summary_threshold = 10
-        
-    if "memory" not in st.session_state:
-        st.session_state.memory = create_enhanced_memory(
-            st.session_state.session_id, 
-            user_id=st.session_state.user_id,
-            enable_summarization=st.session_state.enable_summarization,
-            summary_threshold=st.session_state.summary_threshold
-        )
-        # Clear temporary memory on fresh load/reload
-        st.session_state.memory.clear_user_history()
     
+    if "memory" not in st.session_state:
+        st.session_state.memory = None
+        
     if "indexed" not in st.session_state:
         st.session_state.indexed = False
+    
+    if "db_source" not in st.session_state:
+        st.session_state.db_source = "environment"  # "environment" or "custom"
+    
+    if "custom_db_config" not in st.session_state:
+        st.session_state.custom_db_config = None
+    
+    if "custom_db_connection" not in st.session_state:
+        st.session_state.custom_db_connection = None
+
+
+def render_database_config():
+    """Render database configuration section in sidebar."""
+    st.subheader("🗄️ Database Configuration")
+    
+    # Database source selection
+    db_source = st.radio(
+        "Database Source",
+        options=["Use Environment Variables", "Custom Database"],
+        index=0 if st.session_state.db_source == "environment" else 1,
+        key="db_source_radio",
+        help="Choose to use .env settings or enter custom credentials"
+    )
+    
+    st.session_state.db_source = "environment" if db_source == "Use Environment Variables" else "custom"
+    
+    if st.session_state.db_source == "environment":
+        # Show current environment config
+        current_db_type = config.database.db_type.value.upper()
+        st.info(f"📌 Using {current_db_type} from environment")
+        if config.database.is_sqlite:
+            st.caption(f"Path: {config.database.sqlite_path}")
+        else:
+            st.caption(f"Host: {config.database.host}")
+        return None
+    
+    else:
+        # Custom database configuration
+        st.markdown("##### Enter Database Credentials")
+        
+        # Database type selector
+        db_type_label = st.selectbox(
+            "Database Type",
+            options=list(DB_TYPES.keys()),
+            index=0,
+            key="custom_db_type"
+        )
+        db_type = DB_TYPES[db_type_label]
+        
+        if db_type == "sqlite":
+            # SQLite only needs file path
+            sqlite_path = st.text_input(
+                "Database File Path",
+                value="./chatbot.db",
+                key="sqlite_path_input",
+                help="Path to SQLite database file (will be created if doesn't exist)"
+            )
+            
+            return {
+                "db_type": db_type,
+                "sqlite_path": sqlite_path
+            }
+        
+        else:
+            # MySQL or PostgreSQL
+            col1, col2 = st.columns([3, 1])
+            with col1:
+                host = st.text_input(
+                    "Host",
+                    value="",
+                    key="db_host_input",
+                    placeholder="your-database-host.com"
+                )
+            with col2:
+                default_port = 3306 if db_type == "mysql" else 5432
+                port = st.number_input(
+                    "Port",
+                    value=default_port,
+                    min_value=1,
+                    max_value=65535,
+                    key="db_port_input"
+                )
+            
+            database = st.text_input(
+                "Database Name",
+                value="",
+                key="db_name_input",
+                placeholder="your_database"
+            )
+            
+            username = st.text_input(
+                "Username",
+                value="",
+                key="db_user_input",
+                placeholder="your_username"
+            )
+            
+            password = st.text_input(
+                "Password",
+                value="",
+                type="password",
+                key="db_pass_input"
+            )
+            
+            # Optional SSL
+            with st.expander("🔒 SSL Settings (Optional)"):
+                ssl_ca = st.text_input(
+                    "SSL CA Certificate Path",
+                    value="",
+                    key="ssl_ca_input",
+                    help="Path to SSL CA certificate file (for cloud databases like Aiven)"
+                )
+            
+            return {
+                "db_type": db_type,
+                "host": host,
+                "port": int(port),
+                "database": database,
+                "username": username,
+                "password": password,
+                "ssl_ca": ssl_ca if ssl_ca else None
+            }
 
 
 def render_sidebar():
@@ -94,29 +251,63 @@ def render_sidebar():
             help="Your unique ID for private memory storage"
         )
         if user_id != st.session_state.get("user_id"):
-            # USER ID CHANGE - Same behavior as "New Chat":
-            # 1. Clear temporary memory (session history) for clean start
-            # 2. Permanent memory remains UNTOUCHED (per-user storage)
             st.session_state.user_id = user_id
-            st.session_state.session_id = str(uuid.uuid4())  # New session
-            st.session_state.messages = []  # Clear UI chat history
+            st.session_state.session_id = str(uuid.uuid4())
+            st.session_state.messages = []
             
-            # Create memory for new user and clear their temp history (fresh start)
-            st.session_state.memory = create_enhanced_memory(
-                st.session_state.session_id, 
-                user_id=user_id,
-                enable_summarization=st.session_state.enable_summarization,
-                summary_threshold=st.session_state.summary_threshold
-            )
-            st.session_state.memory.clear_user_history()  # Clears _chatbot_memory, NOT _chatbot_permanent_memory_v2
+            # Recreate memory for new user
+            if st.session_state.custom_db_connection:
+                st.session_state.memory = create_custom_memory(
+                    st.session_state.session_id,
+                    user_id,
+                    st.session_state.custom_db_connection,
+                    st.session_state.get("llm"),
+                    st.session_state.enable_summarization,
+                    st.session_state.summary_threshold
+                )
+            elif st.session_state.initialized:
+                from memory import create_enhanced_memory
+                st.session_state.memory = create_enhanced_memory(
+                    st.session_state.session_id,
+                    user_id=user_id,
+                    enable_summarization=st.session_state.enable_summarization,
+                    summary_threshold=st.session_state.summary_threshold
+                )
+            
+            if st.session_state.memory:
+                st.session_state.memory.clear_user_history()
             st.rerun()
+        
+        st.divider()
+        
+        # Database Configuration
+        custom_db_params = render_database_config()
+        
+        st.divider()
+        
+        # LLM Configuration
+        st.subheader("🤖 LLM Configuration")
+        
+        # Model selection only - API key from environment
+        groq_model = st.selectbox(
+            "Model",
+            options=GROQ_MODELS,
+            index=0,
+            key="groq_model_select"
+        )
+        
+        # Show status of API key
+        if os.getenv("GROQ_API_KEY"):
+            st.success("✓ API Key configured")
+        else:
+            st.warning("⚠️ GROQ_API_KEY not set in environment")
         
         st.divider()
         
         # Initialize Button
         if st.button("🚀 Connect & Initialize", use_container_width=True, type="primary"):
             with st.spinner("Connecting to database..."):
-                success = initialize_chatbot()
+                success = initialize_chatbot(custom_db_params, None, groq_model)
                 if success:
                     st.success("✅ Connected!")
                     st.rerun()
@@ -134,9 +325,19 @@ def render_sidebar():
         # Status
         st.subheader("📊 Status")
         if st.session_state.initialized:
-            st.success("Database: Connected")
-            schema = get_schema()
-            st.info(f"Tables: {len(schema.tables)}")
+            # Show database type
+            if st.session_state.custom_db_connection:
+                db_type = st.session_state.custom_db_connection.db_type.value.upper()
+            else:
+                db_type = get_db().db_type.value.upper()
+            
+            st.success(f"Database: {db_type} ✓")
+            
+            try:
+                schema = get_schema()
+                st.info(f"Tables: {len(schema.tables)}")
+            except:
+                st.warning("Schema not loaded")
             
             if st.session_state.indexed:
                 from rag import get_rag_engine
@@ -145,67 +346,160 @@ def render_sidebar():
         else:
             st.warning("Not connected")
         
-        # New Chat (Context Switch)
-        # New Chat (Context Switch)
+        # New Chat
         if st.button("➕ New Chat", use_container_width=True, type="secondary"):
-            # Clear previous session from DB
-            if "memory" in st.session_state and st.session_state.memory:
+            if st.session_state.memory:
                 st.session_state.memory.clear()
             
             st.session_state.messages = []
-            st.session_state.session_id = str(uuid.uuid4())  # Generate new session ID
+            st.session_state.session_id = str(uuid.uuid4())
             
-            # Preserve current user ID and memory settings
             current_user = st.session_state.get("user_id", "default")
-            st.session_state.memory = create_enhanced_memory(
-                st.session_state.session_id, 
-                user_id=current_user,
-                enable_summarization=st.session_state.enable_summarization,
-                summary_threshold=st.session_state.summary_threshold
-            )
-            # Set LLM client if available
-            if "llm" in st.session_state and st.session_state.llm:
-                st.session_state.memory.set_llm_client(st.session_state.llm)
+            
+            if st.session_state.custom_db_connection:
+                st.session_state.memory = create_custom_memory(
+                    st.session_state.session_id,
+                    current_user,
+                    st.session_state.custom_db_connection,
+                    st.session_state.get("llm"),
+                    st.session_state.enable_summarization,
+                    st.session_state.summary_threshold
+                )
+            elif st.session_state.initialized:
+                from memory import create_enhanced_memory
+                st.session_state.memory = create_enhanced_memory(
+                    st.session_state.session_id, 
+                    user_id=current_user,
+                    enable_summarization=st.session_state.enable_summarization,
+                    summary_threshold=st.session_state.summary_threshold
+                )
+                if st.session_state.get("llm"):
+                    st.session_state.memory.set_llm_client(st.session_state.llm)
+            
             st.rerun()
+        
+        # Disconnect button (when using custom DB)
+        if st.session_state.initialized and st.session_state.db_source == "custom":
+            if st.button("🔌 Disconnect", use_container_width=True):
+                if st.session_state.custom_db_connection:
+                    st.session_state.custom_db_connection.close()
+                st.session_state.custom_db_connection = None
+                st.session_state.chatbot = None
+                st.session_state.initialized = False
+                st.session_state.indexed = False
+                st.session_state.memory = None
+                st.success("Disconnected!")
+                st.rerun()
 
 
-def initialize_chatbot() -> bool:
-    """Initialize the chatbot using environment variables."""
+def initialize_chatbot(custom_db_params=None, api_key=None, model=None) -> bool:
+    """Initialize the chatbot with either environment or custom database."""
     try:
-        # Use Groq as default provider (from environment)
-        api_key = os.getenv("GROQ_API_KEY", "")
-        model = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
+        # Get API key
+        groq_api_key = api_key or os.getenv("GROQ_API_KEY", "")
+        groq_model = model or os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
         
-        if not api_key:
-            st.error("GROQ_API_KEY not configured. Please set it in your .env file.")
+        if not groq_api_key:
+            st.error("GROQ_API_KEY not configured. Please enter your API key.")
             return False
         
-        llm = create_llm_client("groq", api_key=api_key, model=model)
+        # Create LLM client
+        llm = create_llm_client("groq", api_key=groq_api_key, model=groq_model)
         
-        # Create and initialize chatbot
-        chatbot = create_chatbot(llm)
-        
-        # Explicitly set LLM client (also configures router and sql_generator)
-        chatbot.set_llm_client(llm)
-        
-        success, msg = chatbot.initialize()
-        
-        if success:
+        # Create database connection
+        if custom_db_params and st.session_state.db_source == "custom":
+            # Validate custom params
+            db_type = custom_db_params.get("db_type", "mysql")
+            
+            if db_type == "sqlite":
+                if not custom_db_params.get("sqlite_path"):
+                    st.error("Please provide SQLite database path.")
+                    return False
+            else:
+                if not all([custom_db_params.get("host"), 
+                           custom_db_params.get("database"),
+                           custom_db_params.get("username")]):
+                    st.error("Please fill in all required database fields.")
+                    return False
+            
+            # Create custom config
+            db_config = create_custom_db_config(**custom_db_params)
+            
+            # Create custom connection
+            custom_connection = DatabaseConnection(db_config)
+            
+            # Test connection
+            success, msg = custom_connection.test_connection()
+            if not success:
+                st.error(f"Connection failed: {msg}")
+                return False
+            
+            st.session_state.custom_db_connection = custom_connection
+            st.session_state.custom_db_config = db_config
+            
+            # Override the global db connection for the chatbot
+            # We need to create a chatbot with this custom connection
+            from chatbot import DatabaseChatbot
+            from database.schema_introspector import SchemaIntrospector
+            from rag import get_rag_engine
+            from sql import get_sql_generator, get_sql_validator
+            from router import get_query_router
+            
+            chatbot = DatabaseChatbot.__new__(DatabaseChatbot)
+            chatbot.db = custom_connection
+            chatbot.introspector = SchemaIntrospector()
+            chatbot.introspector.db = custom_connection
+            chatbot.rag_engine = get_rag_engine()
+            chatbot.sql_generator = get_sql_generator(db_type)
+            chatbot.sql_validator = get_sql_validator()
+            chatbot.router = get_query_router()
+            chatbot.llm_client = llm
+            chatbot._schema_initialized = False
+            chatbot._rag_initialized = False
+            
+            # Set LLM client
+            chatbot.set_llm_client(llm)
+            
+            # Initialize (introspect schema)
+            schema = chatbot.introspector.introspect(force_refresh=True)
+            chatbot.sql_validator.set_allowed_tables(schema.table_names)
+            chatbot._schema_initialized = True
+            
             st.session_state.chatbot = chatbot
-            st.session_state.llm = llm  # Store LLM separately too
-            st.session_state.initialized = True
             
-            # Set LLM client on memory for summarization
-            if hasattr(st.session_state.memory, 'set_llm_client'):
-                st.session_state.memory.set_llm_client(llm)
-            
-            return True
         else:
-            st.error(f"Initialization failed: {msg}")
-            return False
+            # Use environment-based connection (existing flow)
+            chatbot = create_chatbot(llm)
+            chatbot.set_llm_client(llm)
             
+            success, msg = chatbot.initialize()
+            if not success:
+                st.error(f"Initialization failed: {msg}")
+                return False
+            
+            st.session_state.chatbot = chatbot
+            st.session_state.custom_db_connection = None
+        
+        st.session_state.llm = llm
+        st.session_state.initialized = True
+        
+        # Create memory with appropriate connection
+        db_conn = st.session_state.custom_db_connection or get_db()
+        st.session_state.memory = create_custom_memory(
+            st.session_state.session_id,
+            st.session_state.user_id,
+            db_conn,
+            llm,
+            st.session_state.enable_summarization,
+            st.session_state.summary_threshold
+        )
+        
+        return True
+        
     except Exception as e:
         st.error(f"Error: {str(e)}")
+        import traceback
+        st.error(traceback.format_exc())
         return False
 
 
@@ -215,7 +509,8 @@ def index_data():
         progress = st.progress(0)
         status = st.empty()
         
-        schema = get_schema()
+        # Get schema from the correct introspector
+        schema = st.session_state.chatbot.introspector.introspect()
         total_tables = len(schema.tables)
         indexed = 0
         
@@ -236,26 +531,29 @@ def render_schema_explorer():
         return
     
     with st.expander("📋 Database Schema", expanded=False):
-        schema = get_schema()
-        
-        for table_name, table_info in schema.tables.items():
-            with st.container():
-                st.markdown(f"**{table_name}** ({table_info.row_count or '?'} rows)")
-                
-                cols = []
-                for col in table_info.columns:
-                    pk = "🔑" if col.is_primary_key else ""
-                    txt = "📝" if col.is_text_type else ""
-                    cols.append(f"`{col.name}` {col.data_type} {pk}{txt}")
-                
-                st.caption(" | ".join(cols))
-                st.divider()
+        try:
+            schema = st.session_state.chatbot.introspector.introspect()
+            
+            for table_name, table_info in schema.tables.items():
+                with st.container():
+                    st.markdown(f"**{table_name}** ({table_info.row_count or '?'} rows)")
+                    
+                    cols = []
+                    for col in table_info.columns:
+                        pk = "🔑" if col.is_primary_key else ""
+                        txt = "📝" if col.is_text_type else ""
+                        cols.append(f"`{col.name}` {col.data_type} {pk}{txt}")
+                    
+                    st.caption(" | ".join(cols))
+                    st.divider()
+        except Exception as e:
+            st.error(f"Error loading schema: {e}")
 
 
 def render_chat_interface():
     """Render the main chat interface."""
     st.title("🤖 Database Copilot")
-    st.caption("Schema-agnostic chatbot powered by Groq (FREE!)")
+    st.caption("Schema-agnostic chatbot • MySQL | PostgreSQL | SQLite • Powered by Groq (FREE!)")
     
     # Schema explorer
     render_schema_explorer()
@@ -286,7 +584,8 @@ def render_chat_interface():
         
         # Add user message
         st.session_state.messages.append({"role": "user", "content": prompt})
-        st.session_state.memory.add_message("user", prompt)
+        if st.session_state.memory:
+            st.session_state.memory.add_message("user", prompt)
         
         with st.chat_message("user"):
             st.markdown(prompt)
@@ -322,7 +621,8 @@ def render_chat_interface():
                 "sql_query": response.sql_query
             }
         })
-        st.session_state.memory.add_message("assistant", response.answer)
+        if st.session_state.memory:
+            st.session_state.memory.add_message("assistant", response.answer)
 
 
 def main():
