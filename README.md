@@ -1,5 +1,5 @@
 ---
-title: Database Copilot
+title: OnceDataBot
 emoji: 🤖
 colorFrom: blue
 colorTo: purple
@@ -9,7 +9,7 @@ license: mit
 app_port: 7860
 ---
 
-# 🤖 Database Copilot
+# 🤖 OnceDataBot
 
 A production-grade, **schema-agnostic chatbot** that connects to **any** database (MySQL, PostgreSQL, or SQLite) and provides intelligent querying through **RAG** (Retrieval-Augmented Generation) and **Text-to-SQL**.
 
