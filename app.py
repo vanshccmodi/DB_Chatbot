@@ -552,7 +552,7 @@ def render_schema_explorer():
 
 def render_chat_interface():
     """Render the main chat interface."""
-    st.title("🤖 Database Copilot")
+    st.title("🤖 OnceDataBot")
     st.caption("Schema-agnostic chatbot • MySQL | PostgreSQL | SQLite • Powered by Groq (FREE!)")
     
     # Schema explorer
