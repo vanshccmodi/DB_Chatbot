@@ -47,28 +47,21 @@ GROQ_MODELS = [
 # Database types
 DB_TYPES = {
     "MySQL": "mysql",
-    "PostgreSQL": "postgresql", 
-    "SQLite": "sqlite"
+    "PostgreSQL": "postgresql"
 }
 
 
 def create_custom_db_config(db_type: str, **kwargs) -> DatabaseConfig:
     """Create a custom database configuration from user input."""
-    db_config = DatabaseConfig.__new__(DatabaseConfig)
-    
-    # Set database type
-    db_config.db_type = DatabaseType(db_type)
-    
-    # Set connection parameters
-    db_config.host = kwargs.get("host", "")
-    db_config.port = kwargs.get("port", 3306 if db_type == "mysql" else 5432)
-    db_config.database = kwargs.get("database", "")
-    db_config.username = kwargs.get("username", "")
-    db_config.password = kwargs.get("password", "")
-    db_config.ssl_ca = kwargs.get("ssl_ca", None)
-    db_config.sqlite_path = kwargs.get("sqlite_path", "./chatbot.db")
-    
-    return db_config
+    return DatabaseConfig(
+        db_type=DatabaseType(db_type),
+        host=kwargs.get("host", ""),
+        port=kwargs.get("port", 3306 if db_type == "mysql" else 5432),
+        database=kwargs.get("database", ""),
+        username=kwargs.get("username", ""),
+        password=kwargs.get("password", ""),
+        ssl_ca=kwargs.get("ssl_ca", None)
+    )
 
 
 def create_custom_memory(session_id: str, user_id: str, db_connection, llm_client=None, 
@@ -143,10 +136,7 @@ def render_database_config():
         # Show current environment config
         current_db_type = config.database.db_type.value.upper()
         st.info(f"📌 Using {current_db_type} from environment")
-        if config.database.is_sqlite:
-            st.caption(f"Path: {config.database.sqlite_path}")
-        else:
-            st.caption(f"Host: {config.database.host}")
+        st.caption(f"Host: {config.database.host}")
         return None
     
     else:
@@ -162,21 +152,7 @@ def render_database_config():
         )
         db_type = DB_TYPES[db_type_label]
         
-        if db_type == "sqlite":
-            # SQLite only needs file path
-            sqlite_path = st.text_input(
-                "Database File Path",
-                value="./chatbot.db",
-                key="sqlite_path_input",
-                help="Path to SQLite database file (will be created if doesn't exist)"
-            )
-            
-            return {
-                "db_type": db_type,
-                "sqlite_path": sqlite_path
-            }
-        
-        else:
+        if True:  # MySQL or PostgreSQL (SQLite removed)
             # MySQL or PostgreSQL
             col1, col2 = st.columns([3, 1])
             with col1:
@@ -411,11 +387,7 @@ def initialize_chatbot(custom_db_params=None, api_key=None, model=None) -> bool:
             # Validate custom params
             db_type = custom_db_params.get("db_type", "mysql")
             
-            if db_type == "sqlite":
-                if not custom_db_params.get("sqlite_path"):
-                    st.error("Please provide SQLite database path.")
-                    return False
-            else:
+            if True:
                 if not all([custom_db_params.get("host"), 
                            custom_db_params.get("database"),
                            custom_db_params.get("username")]):
@@ -482,6 +454,11 @@ def initialize_chatbot(custom_db_params=None, api_key=None, model=None) -> bool:
         
         st.session_state.llm = llm
         st.session_state.initialized = True
+        st.session_state.indexed = False  # Reset index status on new connection
+        
+        # Clear RAG index to ensure no data from previous DB connection persists
+        if hasattr(chatbot, 'rag_engine') and hasattr(chatbot.rag_engine, 'clear_index'):
+            chatbot.rag_engine.clear_index()
         
         # Create memory with appropriate connection
         db_conn = st.session_state.custom_db_connection or get_db()
@@ -553,7 +530,7 @@ def render_schema_explorer():
 def render_chat_interface():
     """Render the main chat interface."""
     st.title("🤖 OnceDataBot")
-    st.caption("Schema-agnostic chatbot • MySQL | PostgreSQL | SQLite • Powered by Groq (FREE!)")
+    st.caption("Schema-agnostic chatbot • MySQL | PostgreSQL • Powered by Groq (FREE!)")
     
     # Schema explorer
     render_schema_explorer()

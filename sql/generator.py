@@ -16,8 +16,7 @@ def get_sql_dialect(db_type: str) -> str:
     """Get the SQL dialect name for the given database type."""
     dialects = {
         "mysql": "MySQL",
-        "postgresql": "PostgreSQL",
-        "sqlite": "SQLite"
+        "postgresql": "PostgreSQL"
     }
     return dialects.get(db_type, "SQL")
 

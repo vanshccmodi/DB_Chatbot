@@ -106,7 +106,8 @@ YOUR RESPONSE:"""
         if not self._schema_initialized:
             raise RuntimeError("Chatbot not initialized. Call initialize() first.")
         
-        schema = get_schema()
+        # Use the instance's introspector which might be patched for custom DB
+        schema = self.introspector.introspect()
         total_docs = 0
         
         for table_name, table_info in schema.tables.items():
@@ -117,17 +118,39 @@ YOUR RESPONSE:"""
             pk = table_info.primary_keys[0] if table_info.primary_keys else None
             cols_to_select = text_cols + ([pk] if pk else [])
             
-            query = f"SELECT {', '.join(cols_to_select)} FROM {table_name} LIMIT 1000"
+            # Quote table name based on DB specific rules to handle case sensitivity and special chars
+            if self.db.db_type.value == "mysql":
+                quoted_table = f"`{table_name}`"
+            else:
+                quoted_table = f'"{table_name}"'
+                
+            query = f"SELECT {', '.join(cols_to_select)} FROM {quoted_table} LIMIT 1000"
             
             try:
+                # Try the primary query
+                query = f"SELECT {', '.join(cols_to_select)} FROM {quoted_table} LIMIT 1000"
                 rows = self.db.execute_query(query)
                 docs = self.rag_engine.index_table(table_name, rows, text_cols, pk)
                 total_docs += docs
                 
                 if progress_callback:
                     progress_callback(table_name, docs)
-                    
+
             except Exception as e:
+                # Fallback mechanism for PostgreSQL if table not found (often due to schema issues)
+                if self.db.db_type.value == "postgresql" and "UndefinedTable" in str(e):
+                    try:
+                        logger.warning(f"Initial query failed for {table_name}, trying 'public' schema prefix...")
+                        fallback_query = f"SELECT {', '.join(cols_to_select)} FROM public.\"{table_name}\" LIMIT 1000"
+                        rows = self.db.execute_query(fallback_query)
+                        docs = self.rag_engine.index_table(table_name, rows, text_cols, pk)
+                        total_docs += docs
+                        if progress_callback:
+                            progress_callback(table_name, docs)
+                        continue # Success with fallback
+                    except Exception as e2:
+                        logger.error(f"Fallback query also failed for {table_name}: {e2}")
+                        
                 logger.warning(f"Failed to index {table_name}: {e}")
         
         self.rag_engine.save()
@@ -146,7 +169,8 @@ YOUR RESPONSE:"""
                               error="Configure LLM client first")
         
         try:
-            schema = get_schema()
+            # Use instance introspector
+            schema = self.introspector.introspect()
             schema_context = schema.to_context_string()
             
             # Check for memory commands
@@ -384,7 +408,7 @@ YOUR RESPONSE:"""
         """Get a summary of the database schema."""
         if not self._schema_initialized:
             return "Schema not loaded."
-        return get_schema().to_context_string()
+        return self.introspector.introspect().to_context_string()
 
 
 def create_chatbot(llm_client: Optional[LLMClient] = None) -> DatabaseChatbot:

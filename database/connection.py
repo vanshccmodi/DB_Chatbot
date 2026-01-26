@@ -52,26 +52,7 @@ class DatabaseConnection:
         """
         connect_args = {}
         
-        if self.config.db_type == DatabaseType.SQLITE:
-            # SQLite-specific settings
-            # Use StaticPool for SQLite to handle multi-threading
-            connect_args["check_same_thread"] = False
-            
-            engine = create_engine(
-                self.config.connection_string,
-                poolclass=StaticPool,  # SQLite works best with StaticPool
-                connect_args=connect_args,
-                echo=False
-            )
-            
-            # Enable foreign keys for SQLite
-            @event.listens_for(engine, "connect")
-            def set_sqlite_pragma(dbapi_connection, connection_record):
-                cursor = dbapi_connection.cursor()
-                cursor.execute("PRAGMA foreign_keys=ON")
-                cursor.close()
-            
-        elif self.config.db_type == DatabaseType.POSTGRESQL:
+        if self.config.db_type == DatabaseType.POSTGRESQL:
             # PostgreSQL-specific settings
             if self.config.ssl_ca:
                 connect_args["sslmode"] = "verify-full"

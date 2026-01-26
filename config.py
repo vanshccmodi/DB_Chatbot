@@ -24,7 +24,6 @@ class DatabaseType(Enum):
     """Supported database types."""
     MYSQL = "mysql"
     POSTGRESQL = "postgresql"
-    SQLITE = "sqlite"
 
 
 class LLMProvider(Enum):
@@ -43,11 +42,11 @@ class EmbeddingProvider(Enum):
 @dataclass
 class DatabaseConfig:
     """
-    Database configuration supporting MySQL, PostgreSQL, and SQLite.
+    Database configuration supporting MySQL and PostgreSQL.
     
     All sensitive values are loaded from environment variables.
     """
-    # Database type (mysql, postgresql, sqlite)
+    # Database type (mysql, postgresql)
     db_type: DatabaseType = field(
         default_factory=lambda: DatabaseType(os.getenv("DB_TYPE", "mysql").lower())
     )
@@ -62,17 +61,10 @@ class DatabaseConfig:
     # SSL configuration
     ssl_ca: Optional[str] = field(default_factory=lambda: os.getenv("DB_SSL_CA", os.getenv("MYSQL_SSL_CA", None)))
     
-    # SQLite-specific: path to database file
-    sqlite_path: str = field(default_factory=lambda: os.getenv("SQLITE_PATH", "./chatbot.db"))
-    
     @property
     def connection_string(self) -> str:
         """Generate SQLAlchemy connection string based on database type."""
-        if self.db_type == DatabaseType.SQLITE:
-            # SQLite uses file path
-            return f"sqlite:///{self.sqlite_path}"
-        
-        elif self.db_type == DatabaseType.POSTGRESQL:
+        if self.db_type == DatabaseType.POSTGRESQL:
             # PostgreSQL connection string
             base_url = f"postgresql+psycopg2://{self.username}:{self.password}@{self.host}:{self.port}/{self.database}"
             if self.ssl_ca:
@@ -88,12 +80,8 @@ class DatabaseConfig:
     
     def is_configured(self) -> bool:
         """Check if all required database settings are configured."""
-        if self.db_type == DatabaseType.SQLITE:
-            # SQLite only needs a valid path
-            return bool(self.sqlite_path)
-        else:
-            # MySQL/PostgreSQL need host, database, username, password
-            return all([self.host, self.database, self.username, self.password])
+        # MySQL/PostgreSQL need host, database, username, password
+        return all([self.host, self.database, self.username, self.password])
     
     @property
     def is_mysql(self) -> bool:
@@ -104,11 +92,6 @@ class DatabaseConfig:
     def is_postgresql(self) -> bool:
         """Check if using PostgreSQL."""
         return self.db_type == DatabaseType.POSTGRESQL
-    
-    @property
-    def is_sqlite(self) -> bool:
-        """Check if using SQLite."""
-        return self.db_type == DatabaseType.SQLITE
 
 
 @dataclass
@@ -203,9 +186,7 @@ class RAGConfig:
         # MySQL types
         "TEXT", "MEDIUMTEXT", "LONGTEXT", "TINYTEXT", "VARCHAR", "CHAR",
         # PostgreSQL types
-        "CHARACTER VARYING", "CHARACTER", 
-        # SQLite types (SQLite is flexible but these are common)
-        "CLOB", "NVARCHAR", "NCHAR"
+        "CHARACTER VARYING", "CHARACTER"
     ])
     
     # Minimum character length to consider a column for RAG
@@ -257,10 +238,7 @@ class AppConfig:
         
         if not self.database.is_configured():
             db_type = self.database.db_type.value.upper()
-            if self.database.is_sqlite:
-                errors.append("SQLite configuration incomplete. Check SQLITE_PATH environment variable.")
-            else:
-                errors.append(f"{db_type} configuration incomplete. Check DB_* environment variables.")
+            errors.append(f"{db_type} configuration incomplete. Check DB_* environment variables.")
         
         if not self.llm.is_configured():
             errors.append(

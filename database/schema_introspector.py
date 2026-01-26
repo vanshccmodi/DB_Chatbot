@@ -42,9 +42,7 @@ class ColumnInfo:
             # MySQL
             'text', 'mediumtext', 'longtext', 'tinytext', 'varchar', 'char', 'json',
             # PostgreSQL
-            'character varying', 'character', 'text', 'json', 'jsonb',
-            # SQLite (column affinity - TEXT)
-            'clob', 'nvarchar', 'nchar', 'ntext'
+            'character varying', 'character', 'text', 'json', 'jsonb'
         ]
         data_type_lower = self.data_type.lower().split('(')[0].strip()
         return data_type_lower in text_types
@@ -57,9 +55,7 @@ class ColumnInfo:
             'int', 'integer', 'bigint', 'smallint', 'tinyint',
             'decimal', 'numeric', 'float', 'double', 'real',
             # PostgreSQL specific
-            'double precision', 'serial', 'bigserial', 'smallserial',
-            # SQLite (NUMERIC affinity)
-            'bool', 'boolean'
+            'double precision', 'serial', 'bigserial', 'smallserial'
         ]
         data_type_lower = self.data_type.lower().split('(')[0].strip()
         return data_type_lower in numeric_types
@@ -185,10 +181,10 @@ class SchemaIntrospector:
         '_chatbot_user_summaries',
         'schema_migrations',
         'flyway_schema_history',
-        # SQLite internal tables
-        'sqlite_sequence',
-        'sqlite_stat1',
-        'sqlite_stat4'
+        # Vector store internal tables
+        'chunks',
+        'embeddings',
+        'vectors'
     }
     
     def __init__(self, engine: Optional[Engine] = None):
@@ -245,10 +241,7 @@ class SchemaIntrospector:
         db_type = self.db.db_type
         
         try:
-            if db_type.value == "sqlite":
-                # For SQLite, return the database file name
-                return self.db.config.sqlite_path.split('/')[-1]
-            elif db_type.value == "postgresql":
+            if db_type.value == "postgresql":
                 result = self.db.execute_query("SELECT current_database() as db_name")
                 return result[0]['db_name'] if result else "unknown"
             else:  # MySQL
@@ -266,18 +259,7 @@ class SchemaIntrospector:
         db_type = self.db.db_type
         
         try:
-            if db_type.value == "sqlite":
-                query = """
-                    SELECT name as table_name
-                    FROM sqlite_master 
-                    WHERE type='table' 
-                    AND name NOT LIKE 'sqlite_%'
-                    ORDER BY name
-                """
-                result = self.db.execute_query(query)
-                return [row['table_name'] for row in result]
-                
-            elif db_type.value == "postgresql":
+            if db_type.value == "postgresql":
                 query = """
                     SELECT table_name 
                     FROM information_schema.tables 
@@ -351,24 +333,7 @@ class SchemaIntrospector:
         db_type = self.db.db_type
         
         try:
-            if db_type.value == "sqlite":
-                query = f"PRAGMA table_info('{table_name}')"
-                result = self.db.execute_query(query)
-                
-                columns = []
-                for row in result:
-                    columns.append(ColumnInfo(
-                        name=row['name'],
-                        data_type=row['type'] or 'TEXT',  # SQLite columns can have no type
-                        is_nullable=row['notnull'] == 0,
-                        is_primary_key=row['pk'] == 1,
-                        max_length=None,
-                        default_value=row['dflt_value'],
-                        comment=None  # SQLite doesn't support column comments
-                    ))
-                return columns
-                
-            elif db_type.value == "postgresql":
+            if db_type.value == "postgresql":
                 query = """
                     SELECT 
                         column_name,
@@ -438,17 +403,12 @@ class SchemaIntrospector:
         db_type = self.db.db_type
         
         try:
-            if db_type.value == "sqlite":
-                query = f"PRAGMA table_info('{table_name}')"
-                result = self.db.execute_query(query)
-                return [row['name'] for row in result if row['pk'] > 0]
-                
-            elif db_type.value == "postgresql":
+            if db_type.value == "postgresql":
                 query = """
                     SELECT a.attname as column_name
                     FROM pg_index i
                     JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey)
-                    WHERE i.indrelid = :table_name::regclass
+                    WHERE i.indrelid = CAST(:table_name AS regclass)
                     AND i.indisprimary
                 """
                 result = self.db.execute_query(query, {"table_name": table_name})
@@ -475,15 +435,7 @@ class SchemaIntrospector:
         db_type = self.db.db_type
         
         try:
-            if db_type.value == "sqlite":
-                query = f"PRAGMA foreign_key_list('{table_name}')"
-                result = self.db.execute_query(query)
-                return {
-                    row['from']: f"{row['table']}.{row['to']}"
-                    for row in result
-                }
-                
-            elif db_type.value == "postgresql":
+            if db_type.value == "postgresql":
                 query = """
                     SELECT
                         kcu.column_name,
@@ -534,13 +486,7 @@ class SchemaIntrospector:
         db_type = self.db.db_type
         
         try:
-            if db_type.value == "sqlite":
-                # SQLite doesn't have stats table, use max rowid for estimation
-                query = f"SELECT MAX(rowid) as row_count FROM \"{table_name}\""
-                result = self.db.execute_query(query)
-                return result[0]['row_count'] if result and result[0]['row_count'] else 0
-                
-            elif db_type.value == "postgresql":
+            if db_type.value == "postgresql":
                 # Use pg_stat_user_tables for fast estimation
                 query = """
                     SELECT n_live_tup as row_count
@@ -569,13 +515,9 @@ class SchemaIntrospector:
         db_type = self.db.db_type
         
         try:
-            if db_type.value == "sqlite":
-                # SQLite doesn't support table comments
-                return None
-                
-            elif db_type.value == "postgresql":
+            if db_type.value == "postgresql":
                 query = """
-                    SELECT obj_description(:table_name::regclass, 'pg_class') as table_comment
+                    SELECT obj_description(CAST(:table_name AS regclass), 'pg_class') as table_comment
                 """
                 result = self.db.execute_query(query, {"table_name": table_name})
                 comment = result[0]['table_comment'] if result else None

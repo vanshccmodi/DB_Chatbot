@@ -47,7 +47,7 @@ class SQLValidator:
     def set_allowed_tables(self, tables: List[str]):
         """Set the whitelist of allowed tables."""
         self.allowed_tables = set(tables)
-    
+
     def validate(self, sql: str) -> Tuple[bool, str, Optional[str]]:
         """
         Validate SQL query for safety.
@@ -94,7 +94,11 @@ class SQLValidator:
         # Extract and validate tables
         tables = self._extract_tables(statement)
         if self.allowed_tables:
-            invalid_tables = tables - self.allowed_tables
+            # Normalize for comparison (remove quotes, lowercase)
+            allowed_norm = {t.lower().replace('"', '').replace('`', '') for t in self.allowed_tables}
+            tables_norm = {t.lower().replace('"', '').replace('`', '') for t in tables}
+            
+            invalid_tables = tables_norm - allowed_norm
             if invalid_tables:
                 return False, f"Access denied to tables: {invalid_tables}", None
         
@@ -109,13 +113,14 @@ class SQLValidator:
         sql = str(statement)
         
         # Use regex to find tables after FROM and JOIN
-        # Pattern: FROM table_name or JOIN table_name
+        # Pattern: FROM table_name or JOIN table_name, supporting quotes
+        # Matches: FROM table, FROM "table", FROM `table`
         from_pattern = re.compile(
-            r'\bFROM\s+([a-zA-Z_][a-zA-Z0-9_]*)',
+            r'\bFROM\s+(?:["`]?)([a-zA-Z0-9_]+)(?:["`]?)',
             re.IGNORECASE
         )
         join_pattern = re.compile(
-            r'\bJOIN\s+([a-zA-Z_][a-zA-Z0-9_]*)',
+            r'\bJOIN\s+(?:["`]?)([a-zA-Z0-9_]+)(?:["`]?)',
             re.IGNORECASE
         )
         
@@ -128,7 +133,7 @@ class SQLValidator:
             tables.add(match.group(1))
         
         return tables
-    
+
     def _ensure_limit(self, sql: str) -> str:
         """Ensure the query has a LIMIT clause."""
         sql_upper = sql.upper()
