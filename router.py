@@ -43,9 +43,11 @@ USER QUERY: {query}
 
 Determine if this query needs:
 1. RAG - Semantic search through text content (searching for meanings, concepts, descriptions)
-2. SQL - Structured database query (counting, filtering, aggregating, specific lookups)
+2. SQL - Structured database query (counting, filtering, aggregating, specific lookups, OR pagination requests like "show more", "show other", "next results", "remaining items")
 3. HYBRID - Both semantic search and structured query
 4. GENERAL - General conversation not requiring database access
+
+IMPORTANT: If the user asks to "show more", "show other", "see remaining", "next results", or similar - this is a PAGINATION request and should be routed to SQL, NOT GENERAL.
 
 Respond in this exact format:
 TYPE: [RAG|SQL|HYBRID|GENERAL]
@@ -122,7 +124,11 @@ REASONING: [brief explanation]"""
             'from new york', 'from chicago', 'from los angeles',
             # Specific lookups
             'price of', 'cost of', 'stock of', 'quantity',
-            'where', 'which', 'who'
+            'where', 'which', 'who',
+            # Pagination / follow-up requests
+            'show more', 'show other', 'show rest', 'show remaining',
+            'more results', 'next', 'remaining', 'rest of', 'other also',
+            'continue', 'keep going', 'see more', 'view more'
         ]
         
         # RAG keywords - for semantic/conceptual questions

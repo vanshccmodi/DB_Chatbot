@@ -70,6 +70,10 @@ RULES:
    - Use `OR` to combine multiple column checks.
 6. DATA AWARENESS: In footwear databases, specific types like 'Formal', 'Casual', or 'Sports' often appear in `sub_category` OR `category`. Check both if available.
 7. Return ONLY the SQL query, no explanations.
+8. PAGINATION: If the user asks to "show more", "show other", "see remaining", or similar follow-up:
+   - Look at the previous conversation for the original query conditions.
+   - Use LIMIT with OFFSET to get the next set of results (e.g., LIMIT 10 OFFSET 10 for the second page).
+   - Keep the same WHERE conditions from the previous query.
 
 {dialect_hints}
 
@@ -131,13 +135,13 @@ Generate a single {dialect} SELECT query to answer the user's question."""
     def _extract_sql(self, response: str) -> str:
         """Extract SQL query from LLM response."""
         # Look for SQL in code blocks
-        code_block = re.search(r'```(?:sql)?\\s*(.*?)```', response, re.DOTALL | re.IGNORECASE)
+        code_block = re.search(r'```(?:sql)?\s*(.*?)```', response, re.DOTALL | re.IGNORECASE)
         if code_block:
             return code_block.group(1).strip()
         
         # Look for SELECT statement
         select_match = re.search(
-            r'(SELECT\\s+.+?(?:;|$))', 
+            r'(SELECT\s+.+?(?:;|$))', 
             response, 
             re.DOTALL | re.IGNORECASE
         )
