@@ -21,7 +21,7 @@ from datetime import datetime
 
 # Page config must be first
 st.set_page_config(
-    page_title="Database Copilot",
+    page_title="OnceDataBot",
     page_icon="🤖",
     layout="wide",
     initial_sidebar_state="expanded"
