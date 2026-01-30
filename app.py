@@ -21,6 +21,7 @@ import time
 import io
 import csv
 import base64
+import pandas as pd
 from datetime import datetime
 
 # Page config must be first
@@ -56,7 +57,8 @@ GROQ_MODELS = [
 # Database types
 DB_TYPES = {
     "MySQL": "mysql",
-    "PostgreSQL": "postgresql"
+    "PostgreSQL": "postgresql",
+    "SQLite": "sqlite"
 }
 
 # Supported languages for multi-language responses
@@ -244,7 +246,20 @@ def render_database_config():
         )
         db_type = DB_TYPES[db_type_label]
         
-        if True:  # MySQL or PostgreSQL (SQLite removed)
+        if db_type == "sqlite":
+            # SQLite only needs a file path
+            database = st.text_input(
+                "SQLite Database File",
+                value="ingested_data.db",
+                key="db_sqlite_path",
+                help="Path to the .db file (will be created if it doesn't exist)"
+            )
+            return {
+                "db_type": db_type,
+                "database": database
+            }
+        
+        else:  # MySQL or PostgreSQL
             # MySQL or PostgreSQL
             col1, col2 = st.columns([3, 1])
             with col1:
@@ -390,7 +405,6 @@ def render_sidebar():
         
         st.divider()
         
-        # Export Chat Button
         if st.session_state.messages:
             st.download_button(
                 label="📄 Export Chat",
@@ -400,6 +414,47 @@ def render_sidebar():
                 use_container_width=True,
                 help="Download your chat conversation as a text file"
             )
+        
+        st.divider()
+        
+        # CSV Ingestion Section
+        st.subheader("📥 Ingest CSV Data")
+        uploaded_files = st.file_uploader(
+            "Upload CSV(s) to create database",
+            type=["csv"],
+            accept_multiple_files=True,
+            help="Your CSVs will be converted to tables in a local SQLite database"
+        )
+        
+        if uploaded_files:
+            if st.button("🚀 Upload & Initialize", use_container_width=True):
+                with st.spinner("Processing CSVs..."):
+                    success_count = 0
+                    table_names = []
+                    for uploaded_file in uploaded_files:
+                        success, name, rows = ingest_csv(uploaded_file)
+                        if success:
+                            success_count += 1
+                            table_names.append(name)
+                        else:
+                            st.error(f"Failed to ingest {uploaded_file.name}: {name}")
+                    
+                    if success_count > 0:
+                        st.success(f"Successfully ingested {success_count} file(s) as tables: {', '.join(table_names)}")
+                        
+                        # Now initialize chatbot with this SQLite DB
+                        sqlite_params = {
+                            "db_type": "sqlite",
+                            "database": "ingested_data.db"
+                        }
+                        # Temporarily set db_source to custom for initialization
+                        old_source = st.session_state.db_source
+                        st.session_state.db_source = "custom"
+                        init_success = initialize_chatbot(sqlite_params, None, None)
+                        if not init_success:
+                            st.session_state.db_source = old_source
+                        else:
+                            st.rerun()
         
         st.divider()
         
@@ -572,11 +627,15 @@ def initialize_chatbot(custom_db_params=None, api_key=None, model=None) -> bool:
             # Validate custom params
             db_type = custom_db_params.get("db_type", "mysql")
             
-            if True:
+            if db_type != "sqlite":
                 if not all([custom_db_params.get("host"), 
                            custom_db_params.get("database"),
                            custom_db_params.get("username")]):
                     st.error("Please fill in all required database fields.")
+                    return False
+            else:
+                if not custom_db_params.get("database"):
+                    st.error("Please specify a SQLite database file path.")
                     return False
             
             # Create custom config
@@ -663,6 +722,35 @@ def initialize_chatbot(custom_db_params=None, api_key=None, model=None) -> bool:
         import traceback
         st.error(traceback.format_exc())
         return False
+
+
+def ingest_csv(uploaded_file):
+    """Ingest a CSV file into a SQLite database."""
+    from sqlalchemy import create_engine
+    
+    try:
+        # 1. Read CSV
+        # Reset file pointer to beginning in case it was read before
+        uploaded_file.seek(0)
+        df = pd.read_csv(uploaded_file)
+        
+        # 2. Clean table name from filename
+        table_name = Path(uploaded_file.name).stem.replace(" ", "_").replace("-", "_").lower()
+        # Ensure it starts with a letter and only contains alphanumeric/underscore
+        table_name = "".join([c for c in table_name if c.isalnum() or c == "_"])
+        if not table_name[0].isalpha():
+            table_name = "t_" + table_name
+            
+        # 3. Create/Connect to SQLite DB
+        db_path = "ingested_data.db"
+        engine = create_engine(f"sqlite:///{db_path}")
+        
+        # 4. Write to DB
+        df.to_sql(table_name, engine, if_exists='replace', index=False)
+        
+        return True, table_name, len(df)
+    except Exception as e:
+        return False, str(e), 0
 
 
 def index_data():
