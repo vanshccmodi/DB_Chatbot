@@ -45,6 +45,12 @@ SQLite-SPECIFIC NOTES:
     else:  # MySQL
         return """
 MySQL-SPECIFIC NOTES:
+- CRITICALLY IMPORTANT: This server runs with ONLY_FULL_GROUP_BY enabled.
+- IF YOU USE GROUP BY, EVERY SINGLE COLUMN in the SELECT list MUST be either:
+  1. In the GROUP BY clause, OR
+  2. Wrapped in an aggregate function (SUM, COUNT, AVT, MAX, MIN).
+- EXAMPLE ERROR: "Expression #2 of SELECT list is not in GROUP BY clause..." -> This means you selected a raw column without aggregation.
+- FIX: Change `SELECT name, clicks... GROUP BY name` to `SELECT name, SUM(clicks)... GROUP BY name`.
 - LIKE is case-insensitive for non-binary strings
 - Use CONCAT() for string concatenation
 - Use LIMIT at the end of queries
@@ -69,11 +75,33 @@ RULES:
    - Use pattern matching for flexibility.
    - Use `OR` to combine multiple column checks.
 7. DATA AWARENESS: In footwear databases, specific types like 'Formal', 'Casual', or 'Sports' often appear in `sub_category` OR `category`. Check both if available.
-8. Return ONLY the SQL query, no explanations.
-9. PAGINATION: If the user asks to "show more", "show other", "see remaining", or similar follow-up:
+8. SUBJECTIVE/IMPLICIT FILTERS:
+   If the user asks for subjective attributes (e.g., "for kids", "summer usage", "rainy season") and no direct column exists:
+   - INFER logical mappings using available columns (material, type, category, description).
+   - EXAMPLES:
+     * "Summer" -> `category` IN ('Sandals', 'Slippers', 'Flip Flops') OR `material` IN ('Canvas', 'Mesh') OR `description` LIKE '%breathable%'
+     * "Winter/Rainy" -> `category` IN ('Boots') OR `material` IN ('Leather', 'Synthetic', 'Rubber') OR `description` LIKE '%waterproof%'
+     * "Kids" -> `category` IN ('Kids', 'Children', 'Junior') OR `product_name` LIKE '%Junior%' OR `product_name` LIKE '%Infant%' OR (`size` < 6 AND `size` > 0)
+   - Use `OR` broadly to capture potential matches.
+   - Use pattern matching (`LIKE` / `ILIKE`) on text columns if categories are unclear.
+
+9. Return ONLY the SQL query, no explanations.
+10. PAGINATION: If the user asks to "show more", "show other", "see remaining", or similar follow-up:
    - Look at the previous conversation for the original query conditions.
    - Use LIMIT with OFFSET to get the next set of results (e.g., LIMIT 10 OFFSET 10 for the second page).
    - Keep the same WHERE conditions from the previous query.
+   - Use LIMIT with OFFSET to get the next set of results (e.g., LIMIT 10 OFFSET 10 for the second page).
+   - Keep the same WHERE conditions from the previous query.
+11. GROUP BY RULES: If you use GROUP BY, every column in the SELECT list must be either in the GROUP BY clause or wrapped in an aggregate function (SUM, AVG, COUNT, MAX). Do NOT select raw columns like `clicks` or `price` if you are grouping by `product_name`; use SUM(clicks), AVG(price), etc.
+12. BUSINESS LOGIC & METRICS:
+   - `sales` column is usually QUANTITY (integer). `price` is Unit Price. `mfrcost` is Unit Cost.
+   - REVENUE = `sales * price`
+   - GROSS PROFIT = `(price - mfrcost) * sales`
+   - NET PROFIT (w/ Ad Cost) = `((price - mfrcost) * sales) - adcost`
+   - PROFIT MARGIN (%) = `(NET PROFIT / REVENUE) * 100`
+   - ROAS = `REVENUE / adcost`
+   - If User asks for "Profit" or "Margin" and `adcost` is available, PREFER the NET PROFIT formula that subtracts `adcost`.
+   - Always aggregate (SUM) these values when grouping by product/category.
 
 {dialect_hints}
 
@@ -127,8 +155,15 @@ Generate a single {dialect} SELECT query to answer the user's question."""
         
         response = self.llm_client.chat(messages)
         
-        # Extract SQL from response
-        sql = self._extract_sql(response)
+        # Extract SQL from response content
+        sql = self._extract_sql(response.content)
+        
+        # We can optionally pass usage back too, but for strict backward compatibility 
+        # let's just use the content in the tuple for now, or update the return type.
+        # Since I am updating the chatbot anyway, I will attach usage to the response.
+        # However, to avoid breaking other calls immediately, I'll return the response object as the second item
+        # instead of just the explanation string, OR I can monkey-patch the explanation string.
+        # Better: let's update return type to Tuple[str, LLMResponse].
         
         return sql, response
     

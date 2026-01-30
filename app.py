@@ -565,14 +565,24 @@ def render_chat_interface():
                 # Show metadata for assistant messages
                 if msg["role"] == "assistant" and "metadata" in msg:
                     meta = msg["metadata"]
+                    
+                    # Show token usage in a box
+                    if "token_usage" in meta:
+                        usage = meta["token_usage"]
+                        st.info(f"📊 **Token Usage**: Input: {usage.get('input', 0)} | Output: {usage.get('output', 0)} | Total: {usage.get('total', 0)}")
+                    
                     if meta.get("query_type"):
                         st.caption(f"Query type: {meta['query_type']}")
+                        
+                    # SQL Query expander
                     if meta.get("sql_query"):
-                        with st.expander("SQL Query"):
+                        with st.expander("🛠️ SQL Query & Details"):
                             st.code(meta["sql_query"], language="sql")
-                    
+                            
+                    # Visualizations
                     if meta.get("sql_results"):
-                        render_visualization(meta["sql_results"], f"hist_{i}")
+                        # Only render viz if we have results
+                        render_visualization(meta["sql_results"], f"viz_{i}")
     
     # Chat input
     if prompt := st.chat_input("Ask about your data..."):
@@ -582,35 +592,49 @@ def render_chat_interface():
         
         # Add user message
         st.session_state.messages.append({"role": "user", "content": prompt})
-        if st.session_state.memory:
-            st.session_state.memory.add_message("user", prompt)
         
-        # Display user message immediately
+        # Calculate memory context for display? No, just render user msg
         with st.chat_message("user"):
             st.markdown(prompt)
         
         # Get response
         with st.spinner("Thinking..."):
-            response = st.session_state.chatbot.chat(
-                prompt, 
-                st.session_state.memory,
-                ignored_tables=list(st.session_state.ignored_tables)
-            )
-            
-            # Save to memory
-            st.session_state.messages.append({
-                "role": "assistant",
-                "content": response.answer,
-                "metadata": {
+            try:
+                # Add memory interaction
+                if st.session_state.memory:
+                    st.session_state.memory.add_message("user", prompt)
+                
+                response = st.session_state.chatbot.chat(
+                    prompt, 
+                    st.session_state.memory,
+                    ignored_tables=list(st.session_state.ignored_tables)
+                )
+                
+                # Create metadata dict
+                metadata = {
                     "query_type": response.query_type,
                     "sql_query": response.sql_query,
-                    "sql_results": response.sql_results
+                    "sql_results": response.sql_results,
+                    "token_usage": response.token_usage
                 }
-            })
-            if st.session_state.memory:
-                st.session_state.memory.add_message("assistant", response.answer)
-            
-            st.rerun()
+                
+                # Save to session state
+                st.session_state.messages.append({
+                    "role": "assistant",
+                    "content": response.answer,
+                    "metadata": metadata
+                })
+                
+                # Save to active memory
+                if st.session_state.memory:
+                    st.session_state.memory.add_message("assistant", response.answer)
+                
+                st.rerun()
+                
+            except Exception as e:
+                st.error(f"An error occurred: {e}")
+                import traceback
+                st.error(traceback.format_exc())
 
 
 def main():

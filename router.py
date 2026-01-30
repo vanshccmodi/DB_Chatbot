@@ -43,7 +43,7 @@ USER QUERY: {query}
 
 Determine if this query needs:
 1. RAG - Semantic search through text content (searching for meanings, concepts, descriptions)
-2. SQL - Structured database query (counting, filtering, aggregating, specific lookups, OR pagination requests like "show more", "show other", "next results", "remaining items")
+2. SQL - Structured database query (counting, filtering, aggregating, specific lookups, OR pagination requests like "show more", "show other", "next results", "remaining items", OR subjective filtering like "for kids", "summer shoes", "rainy season" which map to columns)
 3. HYBRID - Both semantic search and structured query
 4. GENERAL - General conversation not requiring database access
 
@@ -81,7 +81,7 @@ REASONING: [brief explanation]"""
                 {"role": "system", "content": "You are a query routing assistant."},
                 {"role": "user", "content": prompt}
             ])
-            return self._parse_routing_response(response)
+            return self._parse_routing_response(response.content)
         except Exception as e:
             logger.warning(f"LLM routing failed: {e}, using heuristics")
             return self._heuristic_route(query)
@@ -158,6 +158,8 @@ REASONING: [brief explanation]"""
             return RoutingDecision(QueryType.SQL, 0.8, "SQL query for data retrieval")
         elif rag_score > sql_score:
             return RoutingDecision(QueryType.RAG, 0.8, "Semantic search for concepts")
+        elif "is it good" in query_lower or "consider other" in query_lower:
+            return RoutingDecision(QueryType.GENERAL, 0.7, "Consultative question about metrics")
         elif sql_score > 0 and rag_score > 0:
             return RoutingDecision(QueryType.HYBRID, 0.6, "Mixed query type")
         else:

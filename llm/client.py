@@ -11,11 +11,21 @@ from typing import List, Dict, Optional
 logger = logging.getLogger(__name__)
 
 
+from dataclasses import dataclass
+
+@dataclass
+class LLMResponse:
+    content: str
+    input_tokens: int = 0
+    output_tokens: int = 0
+    total_tokens: int = 0
+
+
 class LLMClient(ABC):
     """Abstract base class for LLM clients."""
     
     @abstractmethod
-    def chat(self, messages: List[Dict[str, str]]) -> str:
+    def chat(self, messages: List[Dict[str, str]]) -> LLMResponse:
         pass
     
     @abstractmethod
@@ -64,14 +74,20 @@ class GroqClient(LLMClient):
             self._client = Groq(api_key=self.api_key)
         return self._client
     
-    def chat(self, messages: List[Dict[str, str]]) -> str:
+    def chat(self, messages: List[Dict[str, str]]) -> LLMResponse:
         response = self.client.chat.completions.create(
             model=self.model,
             messages=messages,
             temperature=self.temperature,
             max_tokens=self.max_tokens
         )
-        return response.choices[0].message.content
+        usage = response.usage
+        return LLMResponse(
+            content=response.choices[0].message.content,
+            input_tokens=usage.prompt_tokens if usage else 0,
+            output_tokens=usage.completion_tokens if usage else 0,
+            total_tokens=usage.total_tokens if usage else 0
+        )
     
     def is_available(self) -> bool:
         try:
@@ -106,14 +122,20 @@ class OpenAIClient(LLMClient):
             self._client = OpenAI(api_key=self.api_key)
         return self._client
     
-    def chat(self, messages: List[Dict[str, str]]) -> str:
+    def chat(self, messages: List[Dict[str, str]]) -> LLMResponse:
         response = self.client.chat.completions.create(
             model=self.model,
             messages=messages,
             temperature=self.temperature,
             max_tokens=self.max_tokens
         )
-        return response.choices[0].message.content
+        usage = response.usage
+        return LLMResponse(
+            content=response.choices[0].message.content,
+            input_tokens=usage.prompt_tokens if usage else 0,
+            output_tokens=usage.completion_tokens if usage else 0,
+            total_tokens=usage.total_tokens if usage else 0
+        )
     
     def is_available(self) -> bool:
         try:
@@ -150,14 +172,21 @@ class LocalLLaMAClient(LLMClient):
             )
         return self._pipeline
     
-    def chat(self, messages: List[Dict[str, str]]) -> str:
+    def chat(self, messages: List[Dict[str, str]]) -> LLMResponse:
         output = self.pipeline(
             messages,
             max_new_tokens=self.max_tokens,
             temperature=self.temperature,
             do_sample=True
         )
-        return output[0]["generated_text"][-1]["content"]
+        generated_text = output[0]["generated_text"][-1]["content"]
+        # Approximate tokens for local (or use tokenizer if available)
+        return LLMResponse(
+            content=generated_text,
+            input_tokens=0, # Local pipeline generic usually doesn't give this easily without more access
+            output_tokens=0,
+            total_tokens=0
+        )
     
     def is_available(self) -> bool:
         try:
@@ -165,8 +194,7 @@ class LocalLLaMAClient(LLMClient):
             return True
         except Exception:
             return False
-
-
+            
 def create_llm_client(provider: str = "groq", **kwargs) -> LLMClient:
     """
     Factory function to create LLM client.

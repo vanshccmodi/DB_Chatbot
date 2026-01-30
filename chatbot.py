@@ -32,10 +32,13 @@ class ChatResponse:
     sql_query: Optional[str] = None
     sql_results: Optional[List[Dict]] = None
     error: Optional[str] = None
+    token_usage: Optional[Dict[str, int]] = None
     
     def __post_init__(self):
         if self.sources is None:
             self.sources = []
+        if self.token_usage is None:
+            self.token_usage = {"input": 0, "output": 0, "total": 0}
 
 
 class DatabaseChatbot:
@@ -62,6 +65,8 @@ INTERACTION GUIDELINES:
   Example: "Here are the top 5 products... Would you like to see the top 10?"
 - If the user's question was broad (e.g., "Show me products") and you're showing a limited set, ASK if they want to filter by a specific attribute (e.g., "Would you like to filter by category or price?").
 - If the answer is "0 results" for a "top/best" query, suggest looking at the data generally.
+- IF SUBJECTIVE INFERENCE WAS USED (e.g., inferred "summer" = sandals), EXPLAIN THIS to the user.
+  Example: "I found these products that match 'summer' (based on being Sandals or breathability)..."
 
 YOUR RESPONSE:"""
 
@@ -284,27 +289,42 @@ YOUR RESPONSE:"""
             prompt
         )
         
-        answer = self.llm_client.chat(messages)
+        response = self.llm_client.chat(messages)
         
-        return ChatResponse(answer=answer, query_type="rag",
-                          sources=[{"type": "semantic_search", "context": context[:500]}])
+        usage = {
+            "input": response.input_tokens,
+            "output": response.output_tokens,
+            "total": response.total_tokens
+        }
+        
+        return ChatResponse(answer=response.content, query_type="rag",
+                          sources=[{"type": "semantic_search", "context": context[:500]}],
+                          token_usage=usage)
     
     def _handle_sql(self, query: str, schema_context: str, history: List[Dict], allowed_tables: Optional[List[str]] = None) -> ChatResponse:
         """Handle SQL-based query."""
-        sql, explanation = self.sql_generator.generate(query, schema_context, history)
+        sql, gen_response = self.sql_generator.generate(query, schema_context, history)
+        
+        # Initial usage from SQL generation
+        total_usage = {
+            "input": gen_response.input_tokens,
+            "output": gen_response.output_tokens,
+            "total": gen_response.total_tokens
+        }
         
         # Validate SQL
         is_valid, msg, sanitized_sql = self.sql_validator.validate(sql)
         if not is_valid:
             return ChatResponse(answer=f"Could not generate safe query: {msg}",
-                              query_type="sql", error=msg)
+                              query_type="sql", error=msg, token_usage=total_usage)
         
         # Execute query
         try:
             results = self.db.execute_query(sanitized_sql)
         except Exception as e:
             return ChatResponse(answer=f"Query execution failed: {e}",
-                              query_type="sql", sql_query=sanitized_sql, error=str(e))
+                              query_type="sql", sql_query=sanitized_sql, error=str(e),
+                              token_usage=total_usage)
         
         # SMART FALLBACK: If SQL returns nothing, it might be a semantic issue (e.g. wrong column)
         # We try RAG as a fallback if SQL found nothing
@@ -316,6 +336,15 @@ YOUR RESPONSE:"""
             rag_response.answer = f"I couldn't find a direct match using a database query, but here is what I found in the product descriptions:\n\n{rag_response.answer}"
             rag_response.query_type = "hybrid_fallback"
             rag_response.sql_query = sanitized_sql
+            
+            # Add usage from SQL gen to RAG usage
+            if rag_response.token_usage:
+                rag_response.token_usage["input"] += total_usage["input"]
+                rag_response.token_usage["output"] += total_usage["output"]
+                rag_response.token_usage["total"] += total_usage["total"]
+            else:
+                rag_response.token_usage = total_usage
+            
             return rag_response
 
         # Generate response
@@ -328,10 +357,16 @@ YOUR RESPONSE:"""
             prompt
         )
         
-        answer = self.llm_client.chat(messages)
+        final_response = self.llm_client.chat(messages)
         
-        return ChatResponse(answer=answer, query_type="sql",
-                          sql_query=sanitized_sql, sql_results=results[:10])
+        # Add usage from final response
+        total_usage["input"] += final_response.input_tokens
+        total_usage["output"] += final_response.output_tokens
+        total_usage["total"] += final_response.total_tokens
+        
+        return ChatResponse(answer=final_response.content, query_type="sql",
+                          sql_query=sanitized_sql, sql_results=results[:10],
+                          token_usage=total_usage)
     
     def _handle_hybrid(self, query: str, schema_context: str, history: List[Dict], allowed_tables: Optional[List[str]] = None) -> ChatResponse:
         """Handle hybrid RAG + SQL query."""
@@ -341,8 +376,17 @@ YOUR RESPONSE:"""
         # Try SQL as well
         sql_context = ""
         sql_query = None
+        
+        total_usage = {"input": 0, "output": 0, "total": 0}
+        
         try:
-            sql, _ = self.sql_generator.generate(query, schema_context, history)
+            sql, gen_response = self.sql_generator.generate(query, schema_context, history)
+            
+            # Accumulate usage
+            total_usage["input"] += gen_response.input_tokens
+            total_usage["output"] += gen_response.output_tokens
+            total_usage["total"] += gen_response.total_tokens
+            
             is_valid, _, sanitized_sql = self.sql_validator.validate(sql)
             if is_valid:
                 results = self.db.execute_query(sanitized_sql)
@@ -360,9 +404,14 @@ YOUR RESPONSE:"""
             prompt
         )
         
-        answer = self.llm_client.chat(messages)
+        final_response = self.llm_client.chat(messages)
         
-        return ChatResponse(answer=answer, query_type="hybrid", sql_query=sql_query)
+        # Add final usage
+        total_usage["input"] += final_response.input_tokens
+        total_usage["output"] += final_response.output_tokens
+        total_usage["total"] += final_response.total_tokens
+        
+        return ChatResponse(answer=final_response.content, query_type="hybrid", sql_query=sql_query, token_usage=total_usage)
     
     def _construct_messages(self, system_instruction: str, history: List[Dict], user_content: str) -> List[Dict]:
         """Construct message list, merging system messages from history."""
@@ -401,8 +450,15 @@ YOUR RESPONSE:"""
             history, 
             query
         )
-        answer = self.llm_client.chat(messages)
-        return ChatResponse(answer=answer, query_type="general")
+        response = self.llm_client.chat(messages)
+        
+        usage = {
+            "input": response.input_tokens,
+            "output": response.output_tokens,
+            "total": response.total_tokens
+        }
+        
+        return ChatResponse(answer=response.content, query_type="general", token_usage=usage)
     
     def _format_results(self, results: List[Dict], max_rows: int = 10) -> str:
         """Format SQL results for display."""
