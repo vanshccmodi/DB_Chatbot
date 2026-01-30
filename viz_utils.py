@@ -14,7 +14,7 @@ def render_visualization(results, key_prefix):
         tab_data, tab_viz = st.tabs(["📄 Data", "📈 Visualize"])
         
         with tab_data:
-            st.dataframe(df, use_container_width=True)
+            st.dataframe(df)
             
         with tab_viz:
             numeric_cols = df.select_dtypes(include=['number']).columns.tolist()

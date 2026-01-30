@@ -255,15 +255,29 @@ YOUR RESPONSE:"""
             # Route the query
             routing = self.router.route(query, schema_context, history)
             
+            # Initial usage from routing
+            routing_usage = routing.token_usage or {"input": 0, "output": 0, "total": 0}
+            
             # Process based on route
+            response = None
             if routing.query_type == QueryType.RAG:
-                return self._handle_rag(query, history, allowed_tables)
+                response = self._handle_rag(query, history, allowed_tables)
             elif routing.query_type == QueryType.SQL:
-                return self._handle_sql(query, schema_context, history, allowed_tables)
+                response = self._handle_sql(query, schema_context, history, allowed_tables)
             elif routing.query_type == QueryType.HYBRID:
-                return self._handle_hybrid(query, schema_context, history, allowed_tables)
+                response = self._handle_hybrid(query, schema_context, history, allowed_tables)
             else:
-                return self._handle_general(query, history)
+                response = self._handle_general(query, history)
+                
+            # Add routing tokens to total
+            if response.token_usage:
+                response.token_usage["input"] += routing_usage.get("input", 0)
+                response.token_usage["output"] += routing_usage.get("output", 0)
+                response.token_usage["total"] += routing_usage.get("total", 0)
+            else:
+                response.token_usage = routing_usage
+                
+            return response
                 
         except Exception as e:
             logger.error(f"Chat error: {e}")
@@ -273,10 +287,15 @@ YOUR RESPONSE:"""
         """Handle RAG-based query."""
         # Check if we have any indexed data
         if self.rag_engine.document_count == 0:
+            # Even for this error, we consumed tokens up to the routing decision, but since
+            # routing happens before this function, we can't easily track that here.
+            # However, we can return empty usage.
+            usage = {"input": 0, "output": 0, "total": 0}
             return ChatResponse(
                 answer="⚠️ **I can't answer this yet.**\n\nThis looks like a semantic question (searching for meaning/concepts), but you haven't **indexed the text data** yet.\n\nPlease click the **'📚 Index Text Data'** button in the sidebar to enable this functionality.",
                 query_type="error",
-                error="RAG index is empty"
+                error="RAG index is empty",
+                token_usage=usage
             )
 
         context = self.rag_engine.get_context(query, top_k=5, table_filter=allowed_tables)

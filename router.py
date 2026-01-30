@@ -25,10 +25,13 @@ class RoutingDecision:
     confidence: float
     reasoning: str
     suggested_tables: List[str] = None
+    token_usage: Dict[str, int] = None
     
     def __post_init__(self):
         if self.suggested_tables is None:
             self.suggested_tables = []
+        if self.token_usage is None:
+            self.token_usage = {"input": 0, "output": 0, "total": 0}
 
 
 class QueryRouter:
@@ -81,12 +84,19 @@ REASONING: [brief explanation]"""
                 {"role": "system", "content": "You are a query routing assistant."},
                 {"role": "user", "content": prompt}
             ])
-            return self._parse_routing_response(response.content)
+            
+            usage = {
+                "input": response.input_tokens,
+                "output": response.output_tokens,
+                "total": response.total_tokens
+            }
+            
+            return self._parse_routing_response(response.content, usage)
         except Exception as e:
             logger.warning(f"LLM routing failed: {e}, using heuristics")
             return self._heuristic_route(query)
     
-    def _parse_routing_response(self, response: str) -> RoutingDecision:
+    def _parse_routing_response(self, response: str, usage: Dict[str, int] = None) -> RoutingDecision:
         """Parse LLM routing response."""
         lines = response.strip().split('\n')
         
@@ -112,7 +122,7 @@ REASONING: [brief explanation]"""
             elif line.startswith("REASONING:"):
                 reasoning = line.replace("REASONING:", "").strip()
         
-        return RoutingDecision(query_type, confidence, reasoning, tables)
+        return RoutingDecision(query_type, confidence, reasoning, tables, token_usage=usage)
     
     def _heuristic_route(self, query: str) -> RoutingDecision:
         """Simple heuristic-based routing when LLM is unavailable."""
