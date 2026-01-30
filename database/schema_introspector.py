@@ -247,6 +247,8 @@ class SchemaIntrospector:
             if db_type.value == "postgresql":
                 result = self.db.execute_query("SELECT current_database() as db_name")
                 return result[0]['db_name'] if result else "unknown"
+            elif db_type.value == "sqlite":
+                return "sqlite_main"
             else:  # MySQL
                 result = self.db.execute_query("SELECT DATABASE() as db_name")
                 return result[0]['db_name'] if result else "unknown"
@@ -272,6 +274,11 @@ class SchemaIntrospector:
                 """
                 result = self.db.execute_query(query)
                 return [row['table_name'] for row in result]
+                
+            elif db_type.value == "sqlite":
+                query = "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name"
+                result = self.db.execute_query(query)
+                return [row['name'] for row in result]
                 
             else:  # MySQL
                 query = """
@@ -368,6 +375,25 @@ class SchemaIntrospector:
                     ))
                 return columns
                 
+            elif db_type.value == "sqlite":
+                # For SQLite, we use PRAGMA table_info
+                query = f"PRAGMA table_info({table_name})"
+                result = self.db.execute_query(query)
+                
+                columns = []
+                for row in result:
+                    # SQLite PRAGMA result: cid, name, type, notnull, dflt_value, pk
+                    columns.append(ColumnInfo(
+                        name=row['name'],
+                        data_type=row['type'],
+                        is_nullable=row['notnull'] == 0,
+                        is_primary_key=row['pk'] > 0,
+                        max_length=None, # Extract from type string if needed
+                        default_value=row['dflt_value'],
+                        comment=None
+                    ))
+                return columns
+                
             else:  # MySQL
                 query = """
                     SELECT 
@@ -417,6 +443,11 @@ class SchemaIntrospector:
                 result = self.db.execute_query(query, {"table_name": table_name})
                 return [row['column_name'] for row in result]
                 
+            elif db_type.value == "sqlite":
+                query = f"PRAGMA table_info({table_name})"
+                result = self.db.execute_query(query)
+                return [row['name'] for row in result if row['pk'] > 0]
+                
             else:  # MySQL
                 query = """
                     SELECT COLUMN_NAME
@@ -460,6 +491,15 @@ class SchemaIntrospector:
                     for row in result
                 }
                 
+            elif db_type.value == "sqlite":
+                query = f"PRAGMA foreign_key_list({table_name})"
+                result = self.db.execute_query(query)
+                # SQLite PRAGMA result: id, seq, table, from, to, on_update, on_delete, match
+                return {
+                    row['from']: f"{row['table']}.{row['to']}"
+                    for row in result
+                }
+                
             else:  # MySQL
                 query = """
                     SELECT 
@@ -499,6 +539,11 @@ class SchemaIntrospector:
                 result = self.db.execute_query(query, {"table_name": table_name})
                 return result[0]['row_count'] if result else None
                 
+            elif db_type.value == "sqlite":
+                query = f"SELECT COUNT(*) as row_count FROM {table_name}"
+                result = self.db.execute_query(query)
+                return result[0]['row_count'] if result else 0
+                
             else:  # MySQL
                 query = """
                     SELECT TABLE_ROWS
@@ -525,6 +570,10 @@ class SchemaIntrospector:
                 result = self.db.execute_query(query, {"table_name": table_name})
                 comment = result[0]['table_comment'] if result else None
                 return comment if comment else None
+            
+            elif db_type.value == "sqlite":
+                # SQLite doesn't conveniently support table comments
+                return None
                 
             else:  # MySQL
                 query = """

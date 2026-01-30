@@ -24,6 +24,7 @@ class DatabaseType(Enum):
     """Supported database types."""
     MYSQL = "mysql"
     POSTGRESQL = "postgresql"
+    SQLITE = "sqlite"
 
 
 class LLMProvider(Enum):
@@ -71,6 +72,12 @@ class DatabaseConfig:
                 return f"{base_url}?sslmode=verify-full&sslrootcert={self.ssl_ca}"
             return base_url
         
+        elif self.db_type == DatabaseType.SQLITE:
+            # SQLite connection string (e.g. sqlite:///database.db)
+            # If database is just a name, it will be in the current directory
+            # If it starts with / or \, it's an absolute path
+            return f"sqlite:///{self.database}"
+        
         else:  # MySQL (default)
             # MySQL connection string
             base_url = f"mysql+pymysql://{self.username}:{self.password}@{self.host}:{self.port}/{self.database}"
@@ -80,6 +87,8 @@ class DatabaseConfig:
     
     def is_configured(self) -> bool:
         """Check if all required database settings are configured."""
+        if self.db_type == DatabaseType.SQLITE:
+            return bool(self.database)
         # MySQL/PostgreSQL need host, database, username, password
         return all([self.host, self.database, self.username, self.password])
     
@@ -92,6 +101,11 @@ class DatabaseConfig:
     def is_postgresql(self) -> bool:
         """Check if using PostgreSQL."""
         return self.db_type == DatabaseType.POSTGRESQL
+    
+    @property
+    def is_sqlite(self) -> bool:
+        """Check if using SQLite."""
+        return self.db_type == DatabaseType.SQLITE
 
 
 @dataclass

@@ -70,6 +70,17 @@ class DatabaseConnection:
                 echo=False
             )
             
+        elif self.config.db_type == DatabaseType.SQLITE:
+            # SQLite-specific settings
+            # We use StaticPool for SQLite to avoid issues with multiple threads 
+            # if using in-memory or a single file connection
+            engine = create_engine(
+                self.config.connection_string,
+                poolclass=StaticPool,
+                connect_args={"check_same_thread": False},
+                echo=False
+            )
+            
         else:  # MySQL (default)
             # MySQL-specific settings (SSL for Aiven)
             if self.config.ssl_ca:
