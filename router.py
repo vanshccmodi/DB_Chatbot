@@ -48,6 +48,7 @@ Determine if this query needs:
 4. GENERAL - General conversation not requiring database access
 
 IMPORTANT: If the user asks to "show more", "show other", "see remaining", "next results", or similar - this is a PAGINATION request and should be routed to SQL, NOT GENERAL.
+5. REFERENTIAL/AFFIRMATIVE: If the query is simply "yes", "sure", "ok", "please", or "do it", check if it's likely a confirmation to a previous offer (like "would you like to see 10 more?"). If so, this is likely SQL (pagination or new query). If ambiguous, default to GENERAL.
 
 Respond in this exact format:
 TYPE: [RAG|SQL|HYBRID|GENERAL]
@@ -61,13 +62,19 @@ REASONING: [brief explanation]"""
     def set_llm_client(self, llm_client):
         self.llm_client = llm_client
     
-    def route(self, query: str, schema_context: str) -> RoutingDecision:
+    def route(self, query: str, schema_context: str, chat_history: Optional[List[Dict]] = None) -> RoutingDecision:
         """Analyze query and determine routing."""
         if not self.llm_client:
             # Fallback to simple heuristics
             return self._heuristic_route(query)
         
-        prompt = self.ROUTING_PROMPT.format(schema=schema_context, query=query)
+        prev_context = ""
+        if chat_history and len(chat_history) > 0:
+            last_msg = chat_history[-1]
+            if last_msg.get("role") == "assistant":
+                prev_context = f"\nPREVIOUS ASSISTANT MSG: {last_msg.get('content', '')[:200]}..."
+        
+        prompt = self.ROUTING_PROMPT.format(schema=schema_context, query=query + prev_context)
         
         try:
             response = self.llm_client.chat([

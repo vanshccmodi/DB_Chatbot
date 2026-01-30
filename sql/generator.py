@@ -61,15 +61,16 @@ class SQLGenerator:
 RULES:
 1. ONLY generate SELECT statements.
 2. NEVER use INSERT, UPDATE, DELETE, DROP, CREATE, ALTER, or TRUNCATE.
-3. Always include a LIMIT clause (max 50 rows unless specified).
+3. Always include a LIMIT clause (max 50 rows unless specified). Do NOT use LIMIT 1 for "top" or "best" queries unless explicitly asked for "single" or "one".
 4. Use table and column names EXACTLY as shown in the schema.
-5. AMBIGUITY: If the user asks for a category, type, or specific value, and you are unsure which column it belongs to:
+5. TOP/BEST ITEMS: When asked for 'top', 'highest', or 'best' items (e.g. 'top rated products'), use LIMIT 5 or LIMIT 10 to show potential ties or multiple top candidates. Never use LIMIT 1 for these unless the user explicitly asks for "the number one" or "single best".
+6. AMBIGUITY: If the user asks for a category, type, or specific value, and you are unsure which column it belongs to:
    - Check multiple likely columns (e.g., `category`, `sub_category`, `type`, `description`).
    - Use pattern matching for flexibility.
    - Use `OR` to combine multiple column checks.
-6. DATA AWARENESS: In footwear databases, specific types like 'Formal', 'Casual', or 'Sports' often appear in `sub_category` OR `category`. Check both if available.
-7. Return ONLY the SQL query, no explanations.
-8. PAGINATION: If the user asks to "show more", "show other", "see remaining", or similar follow-up:
+7. DATA AWARENESS: In footwear databases, specific types like 'Formal', 'Casual', or 'Sports' often appear in `sub_category` OR `category`. Check both if available.
+8. Return ONLY the SQL query, no explanations.
+9. PAGINATION: If the user asks to "show more", "show other", "see remaining", or similar follow-up:
    - Look at the previous conversation for the original query conditions.
    - Use LIMIT with OFFSET to get the next set of results (e.g., LIMIT 10 OFFSET 10 for the second page).
    - Keep the same WHERE conditions from the previous query.

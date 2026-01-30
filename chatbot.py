@@ -57,6 +57,12 @@ INSTRUCTIONS:
 - Be concise but complete
 - Format data nicely
 
+INTERACTION GUIDELINES:
+- If the SQL results show a list (e.g., top products) and hit the limit (5, 10, or 50), MENTION this and ASK the user if they want to see more or a specific number. 
+  Example: "Here are the top 5 products... Would you like to see the top 10?"
+- If the user's question was broad (e.g., "Show me products") and you're showing a limited set, ASK if they want to filter by a specific attribute (e.g., "Would you like to filter by category or price?").
+- If the answer is "0 results" for a "top/best" query, suggest looking at the data generally.
+
 YOUR RESPONSE:"""
 
     def __init__(self, llm_client: Optional[LLMClient] = None):
@@ -238,11 +244,11 @@ YOUR RESPONSE:"""
                 else:
                     return ChatResponse(answer="⚠️ Nothing previous to save. Tell me something to remember first!", query_type="memory")
 
-            # Route the query
-            routing = self.router.route(query, schema_context)
-            
             # Get chat history for context
             history = memory.get_context_messages(5) if memory else []
+
+            # Route the query
+            routing = self.router.route(query, schema_context, history)
             
             # Process based on route
             if routing.query_type == QueryType.RAG:
@@ -260,6 +266,14 @@ YOUR RESPONSE:"""
     
     def _handle_rag(self, query: str, history: List[Dict], allowed_tables: Optional[List[str]] = None) -> ChatResponse:
         """Handle RAG-based query."""
+        # Check if we have any indexed data
+        if self.rag_engine.document_count == 0:
+            return ChatResponse(
+                answer="⚠️ **I can't answer this yet.**\n\nThis looks like a semantic question (searching for meaning/concepts), but you haven't **indexed the text data** yet.\n\nPlease click the **'📚 Index Text Data'** button in the sidebar to enable this functionality.",
+                query_type="error",
+                error="RAG index is empty"
+            )
+
         context = self.rag_engine.get_context(query, top_k=5, table_filter=allowed_tables)
         
         prompt = self.RESPONSE_PROMPT.format(context=f"RELEVANT DATA:\n{context}", question=query)

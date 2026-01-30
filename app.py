@@ -34,6 +34,7 @@ from database.connection import DatabaseConnection
 from llm import create_llm_client
 from chatbot import create_chatbot, DatabaseChatbot
 from memory import ChatMemory, EnhancedChatMemory
+from viz_utils import render_visualization
 
 
 # Groq models (all FREE!)
@@ -557,7 +558,7 @@ def render_chat_interface():
     
     with chat_container:
         # Display messages
-        for msg in st.session_state.messages:
+        for i, msg in enumerate(st.session_state.messages):
             with st.chat_message(msg["role"]):
                 st.markdown(msg["content"])
                 
@@ -569,6 +570,9 @@ def render_chat_interface():
                     if meta.get("sql_query"):
                         with st.expander("SQL Query"):
                             st.code(meta["sql_query"], language="sql")
+                    
+                    if meta.get("sql_results"):
+                        render_visualization(meta["sql_results"], f"hist_{i}")
     
     # Chat input
     if prompt := st.chat_input("Ask about your data..."):
@@ -581,43 +585,32 @@ def render_chat_interface():
         if st.session_state.memory:
             st.session_state.memory.add_message("user", prompt)
         
+        # Display user message immediately
         with st.chat_message("user"):
             st.markdown(prompt)
         
         # Get response
-        with st.chat_message("assistant"):
-            with st.spinner("Thinking..."):
-                response = st.session_state.chatbot.chat(
-                    prompt, 
-                    st.session_state.memory,
-                    ignored_tables=list(st.session_state.ignored_tables)
-                )
-                
-                st.markdown(response.answer)
-                
-                # Show metadata
-                if response.query_type != "general":
-                    st.caption(f"Query type: {response.query_type}")
-                
-                if response.sql_query:
-                    with st.expander("SQL Query"):
-                        st.code(response.sql_query, language="sql")
-                
-                if response.sql_results:
-                    with st.expander("Results"):
-                        st.dataframe(response.sql_results)
-        
-        # Save to memory
-        st.session_state.messages.append({
-            "role": "assistant",
-            "content": response.answer,
-            "metadata": {
-                "query_type": response.query_type,
-                "sql_query": response.sql_query
-            }
-        })
-        if st.session_state.memory:
-            st.session_state.memory.add_message("assistant", response.answer)
+        with st.spinner("Thinking..."):
+            response = st.session_state.chatbot.chat(
+                prompt, 
+                st.session_state.memory,
+                ignored_tables=list(st.session_state.ignored_tables)
+            )
+            
+            # Save to memory
+            st.session_state.messages.append({
+                "role": "assistant",
+                "content": response.answer,
+                "metadata": {
+                    "query_type": response.query_type,
+                    "sql_query": response.sql_query,
+                    "sql_results": response.sql_results
+                }
+            })
+            if st.session_state.memory:
+                st.session_state.memory.add_message("assistant", response.answer)
+            
+            st.rerun()
 
 
 def main():
