@@ -117,6 +117,9 @@ def init_session_state():
     
     if "custom_db_connection" not in st.session_state:
         st.session_state.custom_db_connection = None
+        
+    if "ignored_tables" not in st.session_state:
+        st.session_state.ignored_tables = set()
 
 
 def render_database_config():
@@ -505,18 +508,38 @@ def render_schema_explorer():
         try:
             schema = st.session_state.chatbot.introspector.introspect()
             
+            st.markdown("Uncheck tables to exclude them from the chat context.")
+            
             for table_name, table_info in schema.tables.items():
-                with st.container():
-                    st.markdown(f"**{table_name}** ({table_info.row_count or '?'} rows)")
+                col1, col2 = st.columns([0.05, 0.95])
+                
+                with col1:
+                    is_active = table_name not in st.session_state.ignored_tables
+                    active = st.checkbox(
+                        "Use", 
+                        value=is_active, 
+                        key=f"use_{table_name}", 
+                        label_visibility="collapsed",
+                        help=f"Include {table_name} in chat analysis"
+                    )
                     
-                    cols = []
-                    for col in table_info.columns:
-                        pk = "🔑" if col.is_primary_key else ""
-                        txt = "📝" if col.is_text_type else ""
-                        cols.append(f"`{col.name}` {col.data_type} {pk}{txt}")
-                    
-                    st.caption(" | ".join(cols))
-                    st.divider()
+                    if not active:
+                        st.session_state.ignored_tables.add(table_name)
+                    else:
+                        st.session_state.ignored_tables.discard(table_name)
+                
+                with col2:
+                    with st.container():
+                        st.markdown(f"**{table_name}** ({table_info.row_count or '?'} rows)")
+                        
+                        cols = []
+                        for col in table_info.columns:
+                            pk = "🔑" if col.is_primary_key else ""
+                            txt = "📝" if col.is_text_type else ""
+                            cols.append(f"`{col.name}` {col.data_type} {pk}{txt}")
+                        
+                        st.caption(" | ".join(cols))
+                        st.divider()
         except Exception as e:
             st.error(f"Error loading schema: {e}")
 
@@ -566,7 +589,8 @@ def render_chat_interface():
             with st.spinner("Thinking..."):
                 response = st.session_state.chatbot.chat(
                     prompt, 
-                    st.session_state.memory
+                    st.session_state.memory,
+                    ignored_tables=list(st.session_state.ignored_tables)
                 )
                 
                 st.markdown(response.answer)

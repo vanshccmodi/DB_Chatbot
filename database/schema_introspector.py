@@ -109,7 +109,7 @@ class SchemaInfo:
                 result.append((table_name, col.name))
         return result
     
-    def to_context_string(self) -> str:
+    def to_context_string(self, ignored_tables: Optional[List[str]] = None) -> str:
         """
         Generate a natural language description of the schema.
         This is used as context for the LLM.
@@ -119,6 +119,9 @@ class SchemaInfo:
         lines.append("-" * 40)
         
         for table_name, table_info in self.tables.items():
+            if ignored_tables and table_name in ignored_tables:
+                continue
+                
             lines.append(f"\nTable: {table_name}")
             if table_info.comment:
                 lines.append(f"  Description: {table_info.comment}")

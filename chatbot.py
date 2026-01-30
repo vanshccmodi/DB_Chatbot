@@ -158,7 +158,7 @@ YOUR RESPONSE:"""
         
         return total_docs
     
-    def chat(self, query: str, memory: Optional[ChatMemory] = None) -> ChatResponse:
+    def chat(self, query: str, memory: Optional[ChatMemory] = None, ignored_tables: Optional[List[str]] = None) -> ChatResponse:
         """Process a user query and return a response."""
         if not self._schema_initialized:
             return ChatResponse(answer="Chatbot not initialized.", query_type="error",
@@ -171,7 +171,16 @@ YOUR RESPONSE:"""
         try:
             # Use instance introspector
             schema = self.introspector.introspect()
-            schema_context = schema.to_context_string()
+            schema_context = schema.to_context_string(ignored_tables=ignored_tables)
+            
+            # Calculate allowed tables for RAG and Validator
+            allowed_tables = None
+            if ignored_tables:
+                allowed_tables = [t for t in schema.table_names if t not in ignored_tables]
+                # Update validator to only allow these tables
+                self.sql_validator.set_allowed_tables(allowed_tables)
+            else:
+                self.sql_validator.set_allowed_tables(schema.table_names)
             
             # Check for memory commands
             # Check for memory commands
@@ -237,11 +246,11 @@ YOUR RESPONSE:"""
             
             # Process based on route
             if routing.query_type == QueryType.RAG:
-                return self._handle_rag(query, history)
+                return self._handle_rag(query, history, allowed_tables)
             elif routing.query_type == QueryType.SQL:
-                return self._handle_sql(query, schema_context, history)
+                return self._handle_sql(query, schema_context, history, allowed_tables)
             elif routing.query_type == QueryType.HYBRID:
-                return self._handle_hybrid(query, schema_context, history)
+                return self._handle_hybrid(query, schema_context, history, allowed_tables)
             else:
                 return self._handle_general(query, history)
                 
@@ -249,9 +258,9 @@ YOUR RESPONSE:"""
             logger.error(f"Chat error: {e}")
             return ChatResponse(answer=f"Error: {str(e)}", query_type="error", error=str(e))
     
-    def _handle_rag(self, query: str, history: List[Dict]) -> ChatResponse:
+    def _handle_rag(self, query: str, history: List[Dict], allowed_tables: Optional[List[str]] = None) -> ChatResponse:
         """Handle RAG-based query."""
-        context = self.rag_engine.get_context(query, top_k=5)
+        context = self.rag_engine.get_context(query, top_k=5, table_filter=allowed_tables)
         
         prompt = self.RESPONSE_PROMPT.format(context=f"RELEVANT DATA:\n{context}", question=query)
         
@@ -266,7 +275,7 @@ YOUR RESPONSE:"""
         return ChatResponse(answer=answer, query_type="rag",
                           sources=[{"type": "semantic_search", "context": context[:500]}])
     
-    def _handle_sql(self, query: str, schema_context: str, history: List[Dict]) -> ChatResponse:
+    def _handle_sql(self, query: str, schema_context: str, history: List[Dict], allowed_tables: Optional[List[str]] = None) -> ChatResponse:
         """Handle SQL-based query."""
         sql, explanation = self.sql_generator.generate(query, schema_context, history)
         
@@ -287,7 +296,7 @@ YOUR RESPONSE:"""
         # We try RAG as a fallback if SQL found nothing
         if not results:
             logger.info(f"SQL returned no results for query: '{query}'. Falling back to RAG.")
-            rag_response = self._handle_rag(query, history)
+            rag_response = self._handle_rag(query, history, allowed_tables)
             
             # Combine the info: "I couldn't find an exact match in the rows, but here is what I found semantically:"
             rag_response.answer = f"I couldn't find a direct match using a database query, but here is what I found in the product descriptions:\n\n{rag_response.answer}"
@@ -310,10 +319,10 @@ YOUR RESPONSE:"""
         return ChatResponse(answer=answer, query_type="sql",
                           sql_query=sanitized_sql, sql_results=results[:10])
     
-    def _handle_hybrid(self, query: str, schema_context: str, history: List[Dict]) -> ChatResponse:
+    def _handle_hybrid(self, query: str, schema_context: str, history: List[Dict], allowed_tables: Optional[List[str]] = None) -> ChatResponse:
         """Handle hybrid RAG + SQL query."""
         # Get RAG context
-        rag_context = self.rag_engine.get_context(query, top_k=3)
+        rag_context = self.rag_engine.get_context(query, top_k=3, table_filter=allowed_tables)
         
         # Try SQL as well
         sql_context = ""

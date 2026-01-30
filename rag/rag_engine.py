@@ -68,7 +68,7 @@ class RAGEngine:
         """
         results = self.vector_store.search(query, top_k=top_k * 2)
         
-        if table_filter:
+        if table_filter is not None:
             results = [
                 (doc, score) for doc, score in results 
                 if doc.table_name in table_filter
