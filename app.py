@@ -17,6 +17,10 @@ load_dotenv(Path(__file__).parent / ".env")
 
 import streamlit as st
 import uuid
+import time
+import io
+import csv
+import base64
 from datetime import datetime
 
 # Page config must be first
@@ -74,10 +78,8 @@ SUPPORTED_LANGUAGES = {
     "తెలుగు (Telugu)": "te",
     "मराठी (Marathi)": "mr",
     "বাংলা (Bengali)": "bn",
-    "ગુજરાતી (Gujarati)": "gu"
+    "ગુજરાতી (Gujarati)": "gu"
 }
-
-
 
 
 def create_custom_db_config(db_type: str, **kwargs) -> DatabaseConfig:
@@ -150,6 +152,61 @@ def init_session_state():
     
     if "response_language" not in st.session_state:
         st.session_state.response_language = "English"
+    
+    if "favorites" not in st.session_state:
+        st.session_state.favorites = []  # List of message indices that are favorited
+
+
+def export_results_to_csv(results: list) -> str:
+    """Convert SQL results to CSV format and return as downloadable string."""
+    if not results:
+        return ""
+    
+    output = io.StringIO()
+    writer = csv.DictWriter(output, fieldnames=results[0].keys())
+    writer.writeheader()
+    writer.writerows(results)
+    return output.getvalue()
+
+
+def export_chat_to_text() -> str:
+    """Export chat messages to text format."""
+    if not st.session_state.messages:
+        return "No messages to export."
+    
+    lines = []
+    lines.append("=" * 50)
+    lines.append(f"OnceDataBot Chat Export")
+    lines.append(f"Exported: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    lines.append(f"User: {st.session_state.user_id}")
+    lines.append("=" * 50)
+    lines.append("")
+    
+    for i, msg in enumerate(st.session_state.messages):
+        role = "🧑 User" if msg["role"] == "user" else "🤖 Assistant"
+        is_favorited = "⭐ " if i in st.session_state.favorites else ""
+        lines.append(f"{is_favorited}{role}:")
+        lines.append(msg["content"])
+        
+        if msg["role"] == "assistant" and "metadata" in msg:
+            meta = msg["metadata"]
+            if meta.get("sql_query"):
+                lines.append(f"\n📝 SQL Query: {meta['sql_query']}")
+            if meta.get("query_type"):
+                lines.append(f"📌 Query Type: {meta['query_type']}")
+            if meta.get("execution_time"):
+                lines.append(f"⏱️ Execution Time: {meta['execution_time']:.2f}s")
+        
+        lines.append("-" * 40)
+        lines.append("")
+    
+    return "\n".join(lines)
+
+
+def render_copy_button(text: str, key: str):
+    """Render a copy to clipboard button using Streamlit."""
+    # Using a workaround with st.code which has built-in copy
+    st.code(text, language="sql")
 
 
 def render_database_config():
@@ -253,6 +310,33 @@ def render_sidebar():
     with st.sidebar:
         st.title("⚙️ Settings")
         
+        # Session Dashboard
+        if st.session_state.messages:
+            st.markdown("### 📊 Session Stats")
+            
+            # Calculate stats
+            total_msgs = len(st.session_state.messages)
+            assistant_msgs = [m for m in st.session_state.messages if m.get("role") == "assistant"]
+            sql_queries = sum(1 for m in assistant_msgs if m.get("metadata", {}).get("sql_query"))
+            
+            total_tokens = 0
+            exec_times = []
+            for m in assistant_msgs:
+                meta = m.get("metadata", {})
+                total_tokens += meta.get("token_usage", {}).get("total", 0)
+                if meta.get("execution_time"):
+                    exec_times.append(meta["execution_time"])
+            
+            avg_time = sum(exec_times) / len(exec_times) if exec_times else 0
+            
+            col_s1, col_s2 = st.columns(2)
+            col_s1.metric("Queries", sql_queries)
+            col_s2.metric("Tokens", f"{total_tokens:,}")
+            st.caption(f"⏱️ Avg Time: {avg_time:.2f}s | 💬 Msgs: {total_msgs}")
+            st.divider()
+        
+
+        
         # User Profile
         st.subheader("👤 User Profile")
         user_id = st.text_input(
@@ -303,6 +387,19 @@ def render_sidebar():
         if selected_language != st.session_state.response_language:
             st.session_state.response_language = selected_language
             st.toast(f"🌐 Language changed to {selected_language}")
+        
+        st.divider()
+        
+        # Export Chat Button
+        if st.session_state.messages:
+            st.download_button(
+                label="📄 Export Chat",
+                data=export_chat_to_text(),
+                file_name=f"chat_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt",
+                mime="text/plain",
+                use_container_width=True,
+                help="Download your chat conversation as a text file"
+            )
         
         st.divider()
         
@@ -599,38 +696,84 @@ def render_schema_explorer():
         try:
             schema = st.session_state.chatbot.introspector.introspect()
             
-            st.markdown("Uncheck tables to exclude them from the chat context.")
+            tab_list, tab_erd = st.tabs(["📋 Table List", "🕸️ Schema Diagram"])
             
-            for table_name, table_info in schema.tables.items():
-                col1, col2 = st.columns([0.05, 0.95])
+            with tab_list:
+                st.markdown("Uncheck tables to exclude them from the chat context.")
                 
-                with col1:
-                    is_active = table_name not in st.session_state.ignored_tables
-                    active = st.checkbox(
-                        "Use", 
-                        value=is_active, 
-                        key=f"use_{table_name}", 
-                        label_visibility="collapsed",
-                        help=f"Include {table_name} in chat analysis"
-                    )
+                for table_name, table_info in schema.tables.items():
+                    col1, col2 = st.columns([0.05, 0.95])
                     
-                    if not active:
-                        st.session_state.ignored_tables.add(table_name)
-                    else:
-                        st.session_state.ignored_tables.discard(table_name)
-                
-                with col2:
-                    with st.container():
-                        st.markdown(f"**{table_name}** ({table_info.row_count or '?'} rows)")
+                    with col1:
+                        is_active = table_name not in st.session_state.ignored_tables
+                        active = st.checkbox(
+                            "Use", 
+                            value=is_active, 
+                            key=f"use_{table_name}", 
+                            label_visibility="collapsed",
+                            help=f"Include {table_name} in chat analysis"
+                        )
                         
-                        cols = []
-                        for col in table_info.columns:
-                            pk = "🔑" if col.is_primary_key else ""
-                            txt = "📝" if col.is_text_type else ""
-                            cols.append(f"`{col.name}` {col.data_type} {pk}{txt}")
+                        if not active:
+                            st.session_state.ignored_tables.add(table_name)
+                        else:
+                            st.session_state.ignored_tables.discard(table_name)
+                    
+                    with col2:
+                        with st.container():
+                            st.markdown(f"**{table_name}** ({table_info.row_count or '?'} rows)")
+                            
+                            cols = []
+                            for col in table_info.columns:
+                                pk = "🔑" if col.is_primary_key else ""
+                                txt = "📝" if col.is_text_type else ""
+                                cols.append(f"`{col.name}` {col.data_type} {pk}{txt}")
+                            
+                            st.caption(" | ".join(cols))
+                            st.divider()
+            
+            with tab_erd:
+                if len(schema.tables) > 50:
+                    st.warning("⚠️ Too many tables to visualize effectively (limit: 50).")
+                else:
+                    try:
+                        # Build Graphviz DOT string
+                        dot = ['digraph Database {']
+                        dot.append('  rankdir=LR;')
+                        dot.append('  node [shape=box, style="filled,rounded", fillcolor="#f0f2f6", fontname="Arial", fontsize=10];')
+                        dot.append('  edge [fontname="Arial", fontsize=9, color="#666666"];')
                         
-                        st.caption(" | ".join(cols))
-                        st.divider()
+                        # Add nodes (tables)
+                        for table_name in schema.tables:
+                            if table_name not in st.session_state.ignored_tables:
+                                dot.append(f'  "{table_name}" [label="{table_name}", fillcolor="#e1effe", color="#1e40af"];')
+                            else:
+                                dot.append(f'  "{table_name}" [label="{table_name} (ignored)", fillcolor="#f3f4f6", color="#9ca3af", fontcolor="#9ca3af"];')
+                        
+                        # Add edges (relationships)
+                        has_edges = False
+                        for table_name, table_info in schema.tables.items():
+                            for col_name, ref_str in table_info.foreign_keys.items():
+                                # ref_str format: "referenced_table.referenced_column"
+                                if "." in ref_str:
+                                    ref_table = ref_str.split(".")[0]
+                                    # specific_col = ref_str.split(".")[1]
+                                    
+                                    # Only draw if both tables exist in our schema list
+                                    if ref_table in schema.tables:
+                                        dot.append(f'  "{table_name}" -> "{ref_table}" [label="{col_name}"];')
+                                        has_edges = True
+                        
+                        dot.append('}')
+                        graph_code = "\n".join(dot)
+                        st.graphviz_chart(graph_code, width="stretch")
+                        
+                        if not has_edges:
+                            st.info("No foreign key relationships detected in the schema metadata.")
+                            
+                    except Exception as e:
+                        st.error(f"Could not render diagram: {e}")
+
         except Exception as e:
             st.error(f"Error loading schema: {e}")
 
@@ -650,7 +793,26 @@ def render_chat_interface():
         # Display messages
         for i, msg in enumerate(st.session_state.messages):
             with st.chat_message(msg["role"]):
-                st.markdown(msg["content"])
+                # Create columns for message and favorite button
+                msg_col, fav_col = st.columns([0.95, 0.05])
+                
+                with msg_col:
+                    st.markdown(msg["content"])
+                
+                with fav_col:
+                    # Favorite button for assistant messages
+                    if msg["role"] == "assistant":
+                        is_favorited = i in st.session_state.favorites
+                        if st.button(
+                            "⭐" if is_favorited else "☆",
+                            key=f"fav_{i}",
+                            help="Click to favorite/unfavorite this response"
+                        ):
+                            if is_favorited:
+                                st.session_state.favorites.remove(i)
+                            else:
+                                st.session_state.favorites.append(i)
+                            st.rerun()
                 
                 # Show metadata for assistant messages
                 if msg["role"] == "assistant" and "metadata" in msg:
@@ -727,17 +889,33 @@ def render_chat_interface():
                                 """, unsafe_allow_html=True)
                     
                     if meta.get("query_type"):
-                        st.caption(f"Query type: {meta['query_type']}")
+                        # Show query type and execution time on same line
+                        info_text = f"Query type: {meta['query_type']}"
+                        if meta.get("execution_time"):
+                            info_text += f" • ⏱️ {meta['execution_time']:.2f}s"
+                        st.caption(info_text)
                         
                     # SQL Query expander
                     if meta.get("sql_query"):
                         with st.expander("🛠️ SQL Query & Details"):
                             st.code(meta["sql_query"], language="sql")
                             
-                    # Visualizations
+                    # Visualizations and CSV export
                     if meta.get("sql_results"):
                         # Only render viz if we have results
                         render_visualization(meta["sql_results"], f"viz_{i}")
+                        
+                        # CSV Export button
+                        csv_data = export_results_to_csv(meta["sql_results"])
+                        if csv_data:
+                            st.download_button(
+                                label="📊 Export to CSV",
+                                data=csv_data,
+                                file_name=f"query_results_{i}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                                mime="text/csv",
+                                key=f"csv_export_{i}",
+                                help="Download query results as CSV file"
+                            )
     
     # Chat input
     if prompt := st.chat_input("Ask about your data..."):
@@ -759,6 +937,9 @@ def render_chat_interface():
                 if st.session_state.memory:
                     st.session_state.memory.add_message("user", prompt)
                 
+                # Track execution time
+                start_time = time.time()
+                
                 response = st.session_state.chatbot.chat(
                     prompt, 
                     st.session_state.memory,
@@ -766,12 +947,17 @@ def render_chat_interface():
                     language=st.session_state.response_language
                 )
                 
+                execution_time = time.time() - start_time
+                
+
+                
                 # Create metadata dict
                 metadata = {
                     "query_type": response.query_type,
                     "sql_query": response.sql_query,
                     "sql_results": response.sql_results,
-                    "token_usage": response.token_usage
+                    "token_usage": response.token_usage,
+                    "execution_time": execution_time
                 }
                 
                 # Save to session state
@@ -780,6 +966,9 @@ def render_chat_interface():
                     "content": response.answer,
                     "metadata": metadata
                 })
+                
+                # Set flag to auto-read the latest response
+                st.session_state.auto_read_latest = True
                 
                 # Save to active memory
                 if st.session_state.memory:
