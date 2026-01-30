@@ -51,6 +51,8 @@ DB_TYPES = {
 }
 
 
+
+
 def create_custom_db_config(db_type: str, **kwargs) -> DatabaseConfig:
     """Create a custom database configuration from user input."""
     return DatabaseConfig(
@@ -264,14 +266,6 @@ def render_sidebar():
         # LLM Configuration
         st.subheader("🤖 LLM Configuration")
         
-        # Model selection only - API key from environment
-        groq_model = st.selectbox(
-            "Model",
-            options=GROQ_MODELS,
-            index=0,
-            key="groq_model_select"
-        )
-        
         # Show status of API key
         if os.getenv("GROQ_API_KEY"):
             st.success("✓ API Key configured")
@@ -283,7 +277,7 @@ def render_sidebar():
         # Initialize Button
         if st.button("🚀 Connect & Initialize", use_container_width=True, type="primary"):
             with st.spinner("Connecting to database..."):
-                success = initialize_chatbot(custom_db_params, None, groq_model)
+                success = initialize_chatbot(custom_db_params, None, None)
                 if success:
                     st.success("✅ Connected!")
                     st.rerun()
@@ -605,6 +599,15 @@ def render_chat_interface():
 def main():
     """Main application entry point."""
     init_session_state()
+    
+    # Auto-connect to environment database on first load
+    if "auto_connect_attempted" not in st.session_state:
+        st.session_state.auto_connect_attempted = True
+        if st.session_state.db_source == "environment":
+            success = initialize_chatbot()
+            if success:
+                st.toast("✅ Auto-connected to database!")
+
     render_sidebar()
     render_chat_interface()
 
