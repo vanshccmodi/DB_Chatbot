@@ -55,6 +55,28 @@ DB_TYPES = {
     "PostgreSQL": "postgresql"
 }
 
+# Supported languages for multi-language responses
+SUPPORTED_LANGUAGES = {
+    "English": "en",
+    "हिन्दी (Hindi)": "hi",
+    "Español (Spanish)": "es",
+    "Français (French)": "fr",
+    "Deutsch (German)": "de",
+    "中文 (Chinese)": "zh",
+    "日本語 (Japanese)": "ja",
+    "한국어 (Korean)": "ko",
+    "Português (Portuguese)": "pt",
+    "العربية (Arabic)": "ar",
+    "Русский (Russian)": "ru",
+    "Italiano (Italian)": "it",
+    "Nederlands (Dutch)": "nl",
+    "தமிழ் (Tamil)": "ta",
+    "తెలుగు (Telugu)": "te",
+    "मराठी (Marathi)": "mr",
+    "বাংলা (Bengali)": "bn",
+    "ગુજરાતી (Gujarati)": "gu"
+}
+
 
 
 
@@ -125,6 +147,9 @@ def init_session_state():
         
     if "ignored_tables" not in st.session_state:
         st.session_state.ignored_tables = set()
+    
+    if "response_language" not in st.session_state:
+        st.session_state.response_language = "English"
 
 
 def render_database_config():
@@ -263,6 +288,21 @@ def render_sidebar():
             if st.session_state.memory:
                 st.session_state.memory.clear_user_history()
             st.rerun()
+        
+        st.divider()
+        
+        # Language Selection
+        st.subheader("🌐 Response Language")
+        selected_language = st.selectbox(
+            "Select Language",
+            options=list(SUPPORTED_LANGUAGES.keys()),
+            index=list(SUPPORTED_LANGUAGES.keys()).index(st.session_state.response_language),
+            key="language_selector",
+            help="Choose the language for chatbot responses"
+        )
+        if selected_language != st.session_state.response_language:
+            st.session_state.response_language = selected_language
+            st.toast(f"🌐 Language changed to {selected_language}")
         
         st.divider()
         
@@ -616,10 +656,75 @@ def render_chat_interface():
                 if msg["role"] == "assistant" and "metadata" in msg:
                     meta = msg["metadata"]
                     
-                    # Show token usage in a box
+                    # Show token usage in a dropdown expander
                     if "token_usage" in meta:
                         usage = meta["token_usage"]
-                        st.info(f"📊 **Token Usage**: Input: {usage.get('input', 0)} | Output: {usage.get('output', 0)} | Total: {usage.get('total', 0)}")
+                        total = usage.get('total', 0)
+                        
+                        with st.expander(f"📊 Token Usage ({total:,} total)", expanded=False):
+                            # Create styled token usage boxes using columns
+                            st.markdown("""
+                            <style>
+                            .token-box {
+                                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                                border-radius: 12px;
+                                padding: 12px 16px;
+                                color: white;
+                                text-align: center;
+                                box-shadow: 0 4px 15px rgba(102, 126, 234, 0.3);
+                                margin: 4px 0;
+                            }
+                            .token-box-input {
+                                background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);
+                                box-shadow: 0 4px 15px rgba(17, 153, 142, 0.3);
+                            }
+                            .token-box-output {
+                                background: linear-gradient(135deg, #ee0979 0%, #ff6a00 100%);
+                                box-shadow: 0 4px 15px rgba(238, 9, 121, 0.3);
+                            }
+                            .token-box-total {
+                                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                                box-shadow: 0 4px 15px rgba(102, 126, 234, 0.3);
+                            }
+                            .token-label {
+                                font-size: 11px;
+                                text-transform: uppercase;
+                                letter-spacing: 1px;
+                                opacity: 0.9;
+                                margin-bottom: 4px;
+                            }
+                            .token-value {
+                                font-size: 20px;
+                                font-weight: 700;
+                            }
+                            </style>
+                            """, unsafe_allow_html=True)
+                            
+                            col1, col2, col3 = st.columns(3)
+                            
+                            with col1:
+                                st.markdown(f"""
+                                <div class="token-box token-box-input">
+                                    <div class="token-label">📥 Input Tokens</div>
+                                    <div class="token-value">{usage.get('input', 0):,}</div>
+                                </div>
+                                """, unsafe_allow_html=True)
+                            
+                            with col2:
+                                st.markdown(f"""
+                                <div class="token-box token-box-output">
+                                    <div class="token-label">📤 Output Tokens</div>
+                                    <div class="token-value">{usage.get('output', 0):,}</div>
+                                </div>
+                                """, unsafe_allow_html=True)
+                            
+                            with col3:
+                                st.markdown(f"""
+                                <div class="token-box token-box-total">
+                                    <div class="token-label">📊 Total Tokens</div>
+                                    <div class="token-value">{usage.get('total', 0):,}</div>
+                                </div>
+                                """, unsafe_allow_html=True)
                     
                     if meta.get("query_type"):
                         st.caption(f"Query type: {meta['query_type']}")
@@ -657,7 +762,8 @@ def render_chat_interface():
                 response = st.session_state.chatbot.chat(
                     prompt, 
                     st.session_state.memory,
-                    ignored_tables=list(st.session_state.ignored_tables)
+                    ignored_tables=list(st.session_state.ignored_tables),
+                    language=st.session_state.response_language
                 )
                 
                 # Create metadata dict

@@ -59,6 +59,7 @@ INSTRUCTIONS:
 - Resolve pronouns using previous messages
 - Be concise but complete
 - Format data nicely
+{language_instruction}
 
 INTERACTION GUIDELINES:
 - If the SQL results show a list (e.g., top products) and hit the limit (5, 10, or 50), MENTION this and ASK the user if they want to see more or a specific number. 
@@ -89,6 +90,26 @@ YOUR RESPONSE:"""
         self.llm_client = llm_client
         self.sql_generator.set_llm_client(llm_client)
         self.router.set_llm_client(llm_client)
+    
+    def _get_language_instruction(self, language: str) -> str:
+        """Generate language instruction for the response prompt.
+        
+        Args:
+            language: The target language name (e.g., 'Hindi', 'Spanish')
+            
+        Returns:
+            A formatted instruction string for the LLM
+        """
+        if language == "English":
+            return ""  # No special instruction needed for English
+        
+        # Extract the base language name from display name
+        # e.g., "हिन्दी (Hindi)" -> "Hindi"
+        base_language = language
+        if "(" in language and ")" in language:
+            base_language = language.split("(")[1].rstrip(")")
+        
+        return f"\n- **IMPORTANT: Respond ENTIRELY in {base_language}**. Translate your response to {base_language}. Keep technical terms (like table names, column names, SQL) as-is, but explain everything else in {base_language}."
     
     def initialize(self) -> Tuple[bool, str]:
         """Initialize the chatbot by introspecting the database."""
@@ -169,8 +190,15 @@ YOUR RESPONSE:"""
         
         return total_docs
     
-    def chat(self, query: str, memory: Optional[ChatMemory] = None, ignored_tables: Optional[List[str]] = None) -> ChatResponse:
-        """Process a user query and return a response."""
+    def chat(self, query: str, memory: Optional[ChatMemory] = None, ignored_tables: Optional[List[str]] = None, language: str = "English") -> ChatResponse:
+        """Process a user query and return a response.
+        
+        Args:
+            query: The user's question
+            memory: Optional chat memory for context
+            ignored_tables: Tables to exclude from queries
+            language: Preferred response language (default: English)
+        """
         if not self._schema_initialized:
             return ChatResponse(answer="Chatbot not initialized.", query_type="error",
                               error="Call initialize() first")
@@ -261,13 +289,13 @@ YOUR RESPONSE:"""
             # Process based on route
             response = None
             if routing.query_type == QueryType.RAG:
-                response = self._handle_rag(query, history, allowed_tables)
+                response = self._handle_rag(query, history, allowed_tables, language)
             elif routing.query_type == QueryType.SQL:
-                response = self._handle_sql(query, schema_context, history, allowed_tables)
+                response = self._handle_sql(query, schema_context, history, allowed_tables, language)
             elif routing.query_type == QueryType.HYBRID:
-                response = self._handle_hybrid(query, schema_context, history, allowed_tables)
+                response = self._handle_hybrid(query, schema_context, history, allowed_tables, language)
             else:
-                response = self._handle_general(query, history)
+                response = self._handle_general(query, history, language)
                 
             # Add routing tokens to total
             if response.token_usage:
@@ -283,7 +311,7 @@ YOUR RESPONSE:"""
             logger.error(f"Chat error: {e}")
             return ChatResponse(answer=f"Error: {str(e)}", query_type="error", error=str(e))
     
-    def _handle_rag(self, query: str, history: List[Dict], allowed_tables: Optional[List[str]] = None) -> ChatResponse:
+    def _handle_rag(self, query: str, history: List[Dict], allowed_tables: Optional[List[str]] = None, language: str = "English") -> ChatResponse:
         """Handle RAG-based query."""
         # Check if we have any indexed data
         if self.rag_engine.document_count == 0:
@@ -300,7 +328,14 @@ YOUR RESPONSE:"""
 
         context = self.rag_engine.get_context(query, top_k=5, table_filter=allowed_tables)
         
-        prompt = self.RESPONSE_PROMPT.format(context=f"RELEVANT DATA:\n{context}", question=query)
+        # Get language instruction
+        language_instruction = self._get_language_instruction(language)
+        
+        prompt = self.RESPONSE_PROMPT.format(
+            context=f"RELEVANT DATA:\n{context}", 
+            question=query,
+            language_instruction=language_instruction
+        )
         
         messages = self._construct_messages(
             "You are a helpful database assistant.",
@@ -320,7 +355,7 @@ YOUR RESPONSE:"""
                           sources=[{"type": "semantic_search", "context": context[:500]}],
                           token_usage=usage)
     
-    def _handle_sql(self, query: str, schema_context: str, history: List[Dict], allowed_tables: Optional[List[str]] = None) -> ChatResponse:
+    def _handle_sql(self, query: str, schema_context: str, history: List[Dict], allowed_tables: Optional[List[str]] = None, language: str = "English") -> ChatResponse:
         """Handle SQL-based query."""
         sql, gen_response = self.sql_generator.generate(query, schema_context, history)
         
@@ -349,7 +384,7 @@ YOUR RESPONSE:"""
         # We try RAG as a fallback if SQL found nothing
         if not results:
             logger.info(f"SQL returned no results for query: '{query}'. Falling back to RAG.")
-            rag_response = self._handle_rag(query, history, allowed_tables)
+            rag_response = self._handle_rag(query, history, allowed_tables, language)
             
             # Combine the info: "I couldn't find an exact match in the rows, but here is what I found semantically:"
             rag_response.answer = f"I couldn't find a direct match using a database query, but here is what I found in the product descriptions:\n\n{rag_response.answer}"
@@ -366,9 +401,14 @@ YOUR RESPONSE:"""
             
             return rag_response
 
-        # Generate response
+        # Generate response with language instruction
+        language_instruction = self._get_language_instruction(language)
         context = f"SQL QUERY:\n{sanitized_sql}\n\nRESULTS:\n{self._format_results(results)}"
-        prompt = self.RESPONSE_PROMPT.format(context=context, question=query)
+        prompt = self.RESPONSE_PROMPT.format(
+            context=context, 
+            question=query,
+            language_instruction=language_instruction
+        )
         
         messages = self._construct_messages(
             "You are a helpful database assistant.",
@@ -387,7 +427,7 @@ YOUR RESPONSE:"""
                           sql_query=sanitized_sql, sql_results=results[:10],
                           token_usage=total_usage)
     
-    def _handle_hybrid(self, query: str, schema_context: str, history: List[Dict], allowed_tables: Optional[List[str]] = None) -> ChatResponse:
+    def _handle_hybrid(self, query: str, schema_context: str, history: List[Dict], allowed_tables: Optional[List[str]] = None, language: str = "English") -> ChatResponse:
         """Handle hybrid RAG + SQL query."""
         # Get RAG context
         rag_context = self.rag_engine.get_context(query, top_k=3, table_filter=allowed_tables)
@@ -414,8 +454,15 @@ YOUR RESPONSE:"""
         except Exception as e:
             logger.debug(f"SQL part of hybrid failed: {e}")
         
+        # Get language instruction
+        language_instruction = self._get_language_instruction(language)
+        
         context = f"SEMANTIC SEARCH RESULTS:\n{rag_context}{sql_context}"
-        prompt = self.RESPONSE_PROMPT.format(context=context, question=query)
+        prompt = self.RESPONSE_PROMPT.format(
+            context=context, 
+            question=query,
+            language_instruction=language_instruction
+        )
         
         messages = self._construct_messages(
             "You are a helpful database assistant.",
@@ -452,8 +499,19 @@ YOUR RESPONSE:"""
         
         return messages
 
-    def _handle_general(self, query: str, history: List[Dict]) -> ChatResponse:
+    def _handle_general(self, query: str, history: List[Dict], language: str = "English") -> ChatResponse:
         """Handle conversation."""
+        # Get language instruction
+        language_instruction = self._get_language_instruction(language)
+        
+        # Build language suffix for system prompt
+        language_suffix = ""
+        if language != "English":
+            base_language = language
+            if "(" in language and ")" in language:
+                base_language = language.split("(")[1].rstrip(")")
+            language_suffix = f"\n- Respond entirely in {base_language}."
+        
         # Use a strict prompt for general conversation as well to prevent hallucinations
         strict_system_prompt = (
             "You are a helpful database assistant.\n"
@@ -461,7 +519,7 @@ YOUR RESPONSE:"""
             "- Answer ONLY based on the conversation history and any context provided within it.\n"
             "- Do NOT use outside knowledge, general assumptions, or hallucinate facts.\n"
             "- If the answer is not in the history or context, state that you don't have that information.\n"
-            "- Be concise."
+            f"- Be concise.{language_suffix}"
         )
         
         messages = self._construct_messages(
