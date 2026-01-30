@@ -221,57 +221,51 @@ YOUR RESPONSE:"""
             else:
                 self.sql_validator.set_allowed_tables(schema.table_names)
             
-            # Check for memory commands
-            # Check for memory commands
             # Check for memory commands using regex for flexibility
             import re
-            save_pattern = re.compile(r"(?:please\s+)?(?:save|remember|memorize)\s+(?:this|that)?\s*(?:to\s+(?:main\s+)?memory)?\s*(?:that)?\s*:?\s*(.*)", re.IGNORECASE)
-            match = save_pattern.match(query.strip())
+            # This regex captures patterns like "save this", "remember that my size is 7", "please memorize my name"
+            save_pattern = re.compile(r"(?:please\s+)?(?:save|remember|memorize|record|store)\s+(?:this|that|to\s+(?:main\s+)?memory)?\s*(?:that)?\s*:?\s*(.*)", re.IGNORECASE)
+            match = save_pattern.search(query.strip())
             
-            # Check if it looks like a command (starts with command words)
-            is_command = bool(match) and (
-                query.lower().startswith(("save", "remember", "memorize")) or 
-                "saved to" in query.lower() # specific user case "saved to main memory"
-            )
+            # Additional check for colloquial "save to memory" or "memory: X" phrasings
+            is_memory_phrase = any(phrase in query.lower() for phrase in ["save to memory", "remember this", "memorize this", "save my", "remember my"])
+            
+            is_command = bool(match) or is_memory_phrase
 
             if is_command and memory:
-                content_to_save = match.group(1).strip() if match else ""
+                # Prioritize explicit content from the regex match
+                content_to_save = match.group(1).strip() if (match and match.group(1)) else ""
                 
-                # If specific content is provided (e.g. "Remember that I like pizza")
+                # Special case enhancement
+                if not content_to_save:
+                    # Try to extract content if regex was too strict but is_memory_phrase matched
+                    # e.g. "my shoe size is 7, save to memory"
+                    if "save" in query.lower():
+                        content_to_save = query.lower().split("save")[0].strip().strip(",").strip()
+                    elif "remember" in query.lower():
+                        content_to_save = query.lower().split("remember")[1].strip()
+                
+                # If we have content, save it
                 if content_to_save:
-                    # Save the explicit content
-                    success = memory.save_permanent_context(content_to_save)
-                    if success:
+                    is_ok, msg = memory.save_permanent_context(content_to_save)
+                    if is_ok:
                         return ChatResponse(answer=f"💾 I've saved to your permanent memory: '{content_to_save}'", query_type="memory")
                     else:
-                        return ChatResponse(answer="❌ Failed to save to permanent memory. Please try again.", query_type="memory")
+                        return ChatResponse(answer=f"❌ Failed to save to permanent memory: {msg}", query_type="memory")
 
                 # If no content (e.g. "Save this"), save the previous conversation turn
                 elif len(memory.messages) >= 2:
-                    # [-1] is current command ("save to memory")
-                    # [-2] is previous assistant response
-                    # [-3] is previous user query (context for the response)
+                    # We try to grab the last Assistant Response
+                    last_ai_msg = next((m for m in reversed(memory.messages[:-1]) if m.role == "assistant"), None)
+                    last_user_msg = next((m for m in reversed(memory.messages[:-1]) if m.role == "user"), None)
                     
-                    msgs_to_save = []
-                    # We try to grab the last QA pair: User Prompt + AI Response
-                    # memory.messages structure: [User, AI, User, AI, User(current)]
-                    
-                    if len(memory.messages) >= 3:
-                        msg_user = memory.messages[-3]
-                        msg_ai = memory.messages[-2]
-                        
-                        # Verify roles to ensure we are saving a Q&A pair
-                        if msg_user.role == "user" and msg_ai.role == "assistant":
-                            msgs_to_save = [msg_user, msg_ai]
-                            
-                    if msgs_to_save:
-                        # Format: "User: ... | Assistant: ..."
-                        context_str = f"User: {msgs_to_save[0].content} | Assistant: {msgs_to_save[1].content}"
-                        success = memory.save_permanent_context(context_str)
-                        if success:
+                    if last_ai_msg and last_user_msg:
+                        context_str = f"User: {last_user_msg.content} | AI: {last_ai_msg.content}"
+                        is_ok, msg = memory.save_permanent_context(context_str)
+                        if is_ok:
                             return ChatResponse(answer="💾 I've saved our last exchange to your permanent memory.", query_type="memory")
                         else:
-                            return ChatResponse(answer="❌ Failed to save to permanent memory.", query_type="memory")
+                            return ChatResponse(answer=f"❌ Failed to save to permanent memory: {msg}", query_type="memory")
                     else:
                         return ChatResponse(answer="⚠️ I couldn't find a clear previous exchange to save. Try saying 'Remember that [fact]'.", query_type="memory")
                 else:
