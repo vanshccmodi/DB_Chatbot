@@ -364,6 +364,52 @@ def render_sidebar():
                 st.session_state.memory = None
                 st.success("Disconnected!")
                 st.rerun()
+        
+        st.divider()
+        
+        # Chat History Section
+        if st.session_state.memory:
+            st.subheader("🕰️ Chat History")
+            sessions = st.session_state.memory.get_user_sessions()
+            
+            if not sessions:
+                st.caption("No previous chats found.")
+            else:
+                for session in sessions:
+                    # Highlight current session
+                    is_current = session["id"] == st.session_state.session_id
+                    icon = "🟢" if is_current else "💬"
+                    
+                    if st.button(
+                        f"{icon} {session['title']}", 
+                        key=f"hist_{session['id']}",
+                        use_container_width=True,
+                        type="secondary" if not is_current else "primary"
+                    ):
+                        if not is_current:
+                            # Load selected session
+                            st.session_state.session_id = session["id"]
+                            st.session_state.memory.session_id = session["id"]
+                            st.session_state.memory.messages = [] # Clear current state local cache
+                            
+                            # Load from DB
+                            msgs = st.session_state.memory.load_session(session["id"])
+                            st.session_state.messages = msgs
+                            
+                            # Re-populate memory object messages list for context
+                            # (We need to convert dicts back to ChatMessage objects implicitly or just rely on reload)
+                            # Actually, we should probably re-init the memory to be safe or manually populate
+                            # Let's manually populate to keep the connection valid
+                            from memory import ChatMessage
+                            st.session_state.memory.messages = [
+                                ChatMessage(
+                                    role=m['role'], 
+                                    content=m['content'], 
+                                    metadata=m.get('metadata')
+                                ) for m in msgs
+                            ]
+                            
+                            st.rerun()
 
 
 def initialize_chatbot(custom_db_params=None, api_key=None, model=None) -> bool:

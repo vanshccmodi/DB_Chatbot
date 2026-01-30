@@ -360,6 +360,81 @@ class ChatMemory:
             except Exception as e:
                 logger.warning(f"Failed to clear user history from DB: {e}")
 
+    def get_user_sessions(self) -> List[Dict[str, Any]]:
+        """Get a list of all chat sessions for the current user."""
+        if not self.db:
+            return []
+            
+        try:
+            # Group by session_id and get the first message time + preview
+            # Note: This query needs to be compatible with supported DBs
+            query = """
+                SELECT session_id, MIN(created_at) as created_at, 
+                       (SELECT content FROM _chatbot_memory m2 
+                        WHERE m2.session_id = m1.session_id 
+                        AND role = 'user' 
+                        ORDER BY id ASC LIMIT 1) as title
+                FROM _chatbot_memory m1
+                WHERE user_id = :user_id
+                GROUP BY session_id
+                ORDER BY created_at DESC
+            """
+            rows = self.db.execute_query(query, {"user_id": self.user_id})
+            
+            sessions = []
+            for row in rows:
+                title = row.get("title") or "New Chat"
+                if len(title) > 30:
+                    title = title[:30] + "..."
+                
+                sessions.append({
+                    "id": row.get("session_id"),
+                    "created_at": row.get("created_at"),
+                    "title": title
+                })
+            return sessions
+        except Exception as e:
+            logger.warning(f"Failed to fetch user sessions: {e}")
+            return []
+
+    def load_session(self, session_id: str) -> List[Dict]:
+        """Load detailed messages for a specific session."""
+        if not self.db:
+            return []
+            
+        try:
+            query = """
+                SELECT role, content, metadata 
+                FROM _chatbot_memory 
+                WHERE session_id = :session_id AND user_id = :user_id
+                ORDER BY id ASC
+            """
+            rows = self.db.execute_query(query, {
+                "session_id": session_id,
+                "user_id": self.user_id
+            })
+            
+            messages = []
+            for row in rows:
+                meta = row.get("metadata")
+                if isinstance(meta, str):
+                    try:
+                        meta = json.loads(meta)
+                    except:
+                        meta = {}
+                elif meta is None:
+                    meta = {}
+                    
+                messages.append({
+                    "role": row.get("role"),
+                    "content": row.get("content"),
+                    "metadata": meta
+                })
+            return messages
+        except Exception as e:
+            logger.warning(f"Failed to load session {session_id}: {e}")
+            return []
+
 
 class ConversationSummaryMemory:
     """
