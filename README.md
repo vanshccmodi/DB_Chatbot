@@ -11,6 +11,8 @@ app_port: 7860
 
 # 🤖 OnceDataBot
 
+[![Hugging Face Spaces](https://img.shields.io/badge/%F0%9F%A4%97%20Hugging%20Face-Spaces-blue)](https://huggingface.co/spaces/Vanshcc/DB_Chatbot)
+
 A production-grade, **schema-agnostic chatbot** that connects to **any** database (MySQL, PostgreSQL, or SQLite) and provides intelligent querying through **RAG** (Retrieval-Augmented Generation) and **Text-to-SQL**.
 
 **🆓 Powered by Groq for FREE LLM inference!**
